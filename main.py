@@ -45,6 +45,7 @@ def train_convo_vae(continual_train=False, n_epochs=50):
             x_batch = torch.unsqueeze(x_batch, 1)
             t0 = time.time()
             loss = model.loss(x_batch)
+            loss.backward()
             t1 = time.time()
             ep_loss.append(loss.item())
             optimizer.step()
@@ -55,7 +56,7 @@ def train_convo_vae(continual_train=False, n_epochs=50):
         loss_avg.append(np.mean(ep_loss))
         print('Epoch: {}, Avg_Loss: {}'.format(epoch, np.mean(ep_loss)))
         # save model
-        torch.save(model.state_dict(), 'model_params')
+        torch.save(model.state_dict(), 'model_params/cvae_params')
         # save loss figure
         x_axis = np.arange(len(loss_avg))
         plt.plot(x_axis, np.array(loss_avg), '-b')
@@ -74,7 +75,7 @@ def test_convo_vae():
     test_loader = DataLoader(test_set, batch_size=32, shuffle=True, drop_last=True)
     if os.path.isfile('model_params/cvae_params'):
         model = ConvoVAE(in_dim=space_shape, h_dim=500, latent_dim=50, out_dim=space_shape)
-        model.load_state_dict(torch.load('model_params', map_location='cpu'))
+        model.load_state_dict(torch.load('model_params/cvae_params', map_location='cpu'))
         print('Model: {}'.format(model))
         model.eval()
     for batch_idx, data in enumerate(test_loader):
