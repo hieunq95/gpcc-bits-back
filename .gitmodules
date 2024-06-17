@@ -1,0 +1,3 @@
+[submodule "craystack"]
+	path = craystack
+	url = https://github.com/j-towns/craystack

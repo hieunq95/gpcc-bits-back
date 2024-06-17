@@ -1,4 +1,6 @@
 import time
+
+import numpy as np
 import torch
 import craystack as cs
 from torch import optim
@@ -27,7 +29,7 @@ def train_convo_vae(continual_train=False, n_epochs=50):
 
     if continual_train:
         model = ConvoVAE(in_dim=space_shape, h_dim=500, latent_dim=50, out_dim=space_shape)
-        model.load_state_dict(torch.load('model_params/cvae_params'))
+        model.load_state_dict(torch.load('model_params/cvae_params', map_location=device))
         print('Load pre-trained model ...')
     else:
         model = ConvoVAE(in_dim=space_shape, h_dim=500, latent_dim=50, out_dim=space_shape)
@@ -104,6 +106,66 @@ def test_convo_vae():
             visualize_voxels(x_gen_vis)
 
 
+def test_compress_methods():
+    space_shape = [128, 128, 128]
+    voxel_size = 2.0 / space_shape[0]
+    model = ConvoVAE(in_dim=space_shape, h_dim=500, latent_dim=50, out_dim=space_shape)
+    model.load_state_dict(torch.load('model_params/cvae_params', map_location='cpu'))
+    print('Model: {}'.format(model))
+    model.eval()
+    test_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', save_train_test_sets=False,
+                               mode='test', device=device)
+    test_loader = DataLoader(test_set, batch_size=50, shuffle=True, drop_last=True)
+
+    for batch_idx, data in enumerate(test_loader):
+        x_batch = get_sparse_voxels_batch(data, voxel_size=voxel_size)
+        x_batch = torch.unsqueeze(x_batch, 1)
+        independent_vae_compress(x_batch, model)
+
+
+def bits_back_vae_compress(data, model):
+    pass
+
+
+def independent_vae_compress(data, model, precision=26):
+    # [b, 1, 128, 128, 128]
+    batch_size = data.size()[0]
+    num_voxels = np.prod(data.size())
+    print('Independent VAE compress {} point clouds...'.format(batch_size))
+    shape = data.size()[2:]
+    head, tail = cs.base_message((2,) + shape)
+    head = np.split(head, 2)
+    message = head, tail
+    view_func = lambda h: h[0]
+
+    probs = model(data).detach().numpy()
+    append, pop = cs.substack(cs.repeat(cs.Bernoulli(probs, precision), batch_size), view_func)
+    message_, = append(message, data)
+    np.testing.assert_array_equal(message_[0][1], message[0][1])
+
+    flat_message = cs.flatten(message)
+    message_len = 32 * len(flat_message)
+    print("Used {} bits.".format(message_len))
+    print("This is {:.4f} bits per voxel.\n".format(message_len / num_voxels))
+
+    message_, data_ = pop(message_)
+    np.testing.assert_equal(message, message_)
+    np.testing.assert_equal(data, data_)
+
+    # message = cs.base_message(shape)
+    # codec = lambda p: cs.Bernoulli(p, precision)
+    # # Compress
+    # pop_array = []
+    # for i in range(batch_size):
+    #     probs = torch.squeeze(model(data[i])).detach().numpy()
+    #     push, pop = codec(probs)
+    #     pop_array.append(pop)
+    #     print('i: {}, mess_len: {}'.format(i, len(message[0])))
+    #     message, = push(message, data[i])
+    #     print('i: {}, mess_len_pushed: {}'.format(i, len(message[0])))
+
+
 if __name__ == '__main__':
-    train_convo_vae(continual_train=False, n_epochs=50)
-    test_convo_vae()
+    # train_convo_vae(continual_train=True, n_epochs=50)
+    # test_convo_vae()
+    test_compress_methods()
