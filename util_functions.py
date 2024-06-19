@@ -70,7 +70,7 @@ def sample_points_from_mesh(file_path, num_points=5000, visualize=False, print_l
     Sample uniformly points from a mesh. Return None if the mesh object fails to be loaded
     """
     # We do a trick here to avoid errors when loading the mesh objects
-    new_path = '/Users/hieu/open3d_data/extract/ShapeNet/model_normalized.obj'
+    new_path = os.path.expanduser('~/open3d_data/extract/ShapeNet/model_normalized.obj')
     shutil.copyfile(file_path, new_path)
     mesh = o3d.io.read_triangle_mesh(new_path)
     points = None
