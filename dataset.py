@@ -1,6 +1,7 @@
 import os
 import open3d as o3d
 import numpy as np
+import torch
 from torch.utils.data import DataLoader, Dataset
 from util_functions import *
 
@@ -15,7 +16,7 @@ class ShapeNetDataset(Dataset):
         if save_train_test_sets:
             # save train test datasets
             self.save_train_test_datasets(dir_path=os.path.expanduser('~/open3d_data/extract/processed_shapenet/'),
-                                          num_meshes_per_class=2000, num_points_per_cloud=2000)
+                                          num_meshes_per_class=2000, num_points_per_cloud=20000)
         # load dataset
         if self.mode == 'train':
             self.dataset = self.load_dataset(
@@ -139,9 +140,25 @@ if __name__ == '__main__':
     #  | | | |> 1a04e3eab45ca15dd86060f189eb133/
     # Link to download https://shapenet.org/
     dataset = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/',
-                              save_train_test_sets=True, mode='train')
+                              save_train_test_sets=False, mode='test')
     data_loader = DataLoader(dataset, batch_size=16, shuffle=True, drop_last=True)
+    resolution = [128, 128, 128]
+    voxel_min_bound = [-0.5, -0.5, -0.5]
+    voxel_max_bound = [0.5, 0.5, 0.5]
+    voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
     # Visualize some point clouds with Open3D
-    points = data_loader.dataset[0]
-    print('Points shape: {}'.format(points.shape))
-    visualize_points(points)
+    for batch_id, data in enumerate(data_loader):
+        x_batch = get_sparse_voxels_batch(data, voxel_size=voxel_size, voxel_min_bound=voxel_min_bound,
+                                          voxel_max_bound=voxel_max_bound)
+        total_occupied_voxels = torch.sum(x_batch)
+        print('Total occupied voxels: {}'.format(total_occupied_voxels))
+        for i in range(len(data)):
+            points = data[i]
+            print('Points shape: {}'.format(points.shape))
+            visualize_points(points)
+            voxels = x_batch[i]
+            occupied_voxels = torch.sum(voxels)
+            print('Voxels shape: {}'.format(voxels.shape))
+            print('Number of occupied voxels: {}'.format(occupied_voxels))
+            visualize_voxels(voxels)
+

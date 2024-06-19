@@ -107,6 +107,8 @@ def get_sparse_voxels(points, voxel_size, point_weight, voxel_min_bound, voxel_m
     """
     if not isinstance(points, np.ndarray):
         points = points.cpu().data.numpy()
+        # Apply a filter for removing out-of-bound points
+        points = points_remover(points, voxel_min_bound, voxel_max_bound)
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points)
     voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud_within_bounds(
@@ -123,11 +125,8 @@ def get_sparse_voxels(points, voxel_size, point_weight, voxel_min_bound, voxel_m
     max_grid_val = voxel_grid.get_voxel(voxel_max_bound)
     grid_patches = torch.zeros(size=(max_grid_val[0], max_grid_val[1], max_grid_val[2]), dtype=torch.float64)
 
-    # grid_patches = np.zeros(
-    #     shape=(max_grid_val[0], max_grid_val[1], max_grid_val[2]), dtype=np.float64)
-
     for v in all_indices:
-        grid_patches[v[0], v[1], v[2]] += point_weight
+        grid_patches[v[0], v[1], v[2]] = point_weight
 
     return grid_patches
 
@@ -152,6 +151,23 @@ def get_sparse_voxels_batch(points_batch, voxel_size, point_weight=1.0, voxel_mi
 
     return torch.cat(grid_voxels_batches, 0).float()
 
+
+def points_remover(points, voxel_min_bound, voxel_max_bound):
+    """
+    Remove points that are outside of the min_bound and max_bound
+    :param points: (N, 3)
+    :param voxel_min_bound: min bound
+    :param voxel_max_bound: max bound
+    :return: points: (N, 3)
+    """
+    for i in range(len(points)):
+        points[i][0] = 0 if points[i][0] < voxel_min_bound[0] else points[i][0]
+        points[i][0] = 0 if points[i][0] > voxel_max_bound[0] else points[i][0]
+        points[i][1] = 0 if points[i][1] < voxel_min_bound[1] else points[i][1]
+        points[i][1] = 0 if points[i][1] > voxel_max_bound[1] else points[i][1]
+        points[i][2] = 0 if points[i][2] < voxel_min_bound[2] else points[i][2]
+        points[i][2] = 0 if points[i][2] > voxel_max_bound[2] else points[i][2]
+    return points
 
 def zero_padding(points_3d, axis, val, patch_size):
     """
