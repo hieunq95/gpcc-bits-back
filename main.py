@@ -12,7 +12,6 @@ from autograd.builtins import tuple as ag_tuple
 from dataset import ShapeNetDataset
 from util_functions import *
 from models import ConvoVAE
-from gpcc_codecs import ForwardANS
 
 rng = np.random.RandomState(0)
 torch.manual_seed(1234)
@@ -30,7 +29,7 @@ def train_convo_vae(continual_train=False, n_epochs=50):
     voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
     train_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', save_train_test_sets=False,
                                 mode='train', device=device)
-    train_loader = DataLoader(train_set, batch_size=16, shuffle=True, drop_last=True)
+    train_loader = DataLoader(train_set, batch_size=32, shuffle=True, drop_last=True)
 
     if continual_train:
         model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
@@ -47,7 +46,8 @@ def train_convo_vae(continual_train=False, n_epochs=50):
     for epoch in range(n_epochs):
         ep_loss = []
         for batch_id, data in enumerate(train_loader):
-            x_batch = get_sparse_voxels_batch(data, voxel_size=voxel_size).to(device)
+            x_batch = get_sparse_voxels_batch(data, voxel_size=voxel_size, voxel_min_bound=voxel_min_bound,
+                                              voxel_max_bound=voxel_max_bound).to(device)
             optimizer.zero_grad()
             x_batch = torch.unsqueeze(x_batch, 1)
             t0 = time.time()
@@ -88,7 +88,8 @@ def test_convo_vae():
         print('Model: {}'.format(model))
         model.eval()
     for batch_idx, data in enumerate(test_loader):
-        x_batch = get_sparse_voxels_batch(data, voxel_size=voxel_size)
+        x_batch = get_sparse_voxels_batch(data, voxel_size=voxel_size,
+                                          voxel_min_bound=voxel_min_bound, voxel_max_bound=voxel_max_bound)
         x_batch = torch.unsqueeze(x_batch, 1)
         x_probs = model(x_batch)
         gen_probs = model.generate(x_batch.size()[0])
@@ -130,7 +131,8 @@ def test_compress_methods(obs_precision=26):
     obs_codec = lambda p: cs.Bernoulli(p, obs_precision)
 
     for batch_idx, data in enumerate(test_loader):
-        x_batch = get_sparse_voxels_batch(data, voxel_size=voxel_size)
+        x_batch = get_sparse_voxels_batch(data, voxel_size=voxel_size,
+                                          voxel_min_bound=voxel_min_bound, voxel_max_bound=voxel_max_bound)
         x_batch = torch.unsqueeze(x_batch, 1)
         bits_back_vae_ans(x_batch, gen_net, rec_net, obs_codec, obs_precision, 1)
         bernoulli_ans(x_batch, model, obs_precision, 1)
@@ -233,6 +235,6 @@ def bits_back_vae_ans(data, gen_net, rec_net, obs_codec, obs_precision, subset_s
 
 
 if __name__ == '__main__':
-    train_convo_vae(continual_train=True, n_epochs=50)
+    train_convo_vae(continual_train=False, n_epochs=50)
     test_convo_vae()
     test_compress_methods()

@@ -7,16 +7,19 @@ from util_functions import *
 
 
 class ShapeNetDataset(Dataset):
-    def __init__(self, dataset_path, save_train_test_sets=False, mode='train', device='cpu'):
+    def __init__(self, dataset_path, save_train_test_sets=False, mode='train', device='cpu',
+                 crop_min_bound=(-0.5, -0.5, -0.5), crop_max_bound=(0.5, 0.5, 0.5), n_points_per_cloud=20000):
         self.dataset_path = os.path.expanduser(dataset_path)
         self.mode = mode
         self.device = device
+        self.crop_min_bound = crop_min_bound
+        self.crop_max_bound = crop_max_bound
         self.shape_classes = ['02691156', '02958343', '03001627', '03636649', '04256520', '04379243']
 
         if save_train_test_sets:
             # save train test datasets
             self.save_train_test_datasets(dir_path=os.path.expanduser('~/open3d_data/extract/processed_shapenet/'),
-                                          num_meshes_per_class=2000, num_points_per_cloud=20000)
+                                          num_meshes_per_class=2000, num_points_per_cloud=n_points_per_cloud)
         # load dataset
         if self.mode == 'train':
             self.dataset = self.load_dataset(
@@ -56,15 +59,6 @@ class ShapeNetDataset(Dataset):
         print('\nFound {} mesh objects'.format(idx))
         return mesh_obj_paths
 
-    def save_sample_point_cloud_set(self, mesh_obj_paths, num_points_per_cloud, saved_path):
-        pc_stack = []
-        for path in mesh_obj_paths:
-            points, _ = sample_points_from_mesh(path, num_points=num_points_per_cloud)
-            pc_stack.append(points)
-        pc_stack = np.asarray(pc_stack)
-        print('Save point cloud dataset pc_stack.shape: {}'.format(pc_stack.shape))
-        np.save(saved_path, pc_stack)
-
     def save_train_test_datasets(self, dir_path, split_ratio=0.8, num_meshes_per_class=100, num_points_per_cloud=100):
         mesh_train_paths = []
         mesh_test_paths = []
@@ -87,11 +81,13 @@ class ShapeNetDataset(Dataset):
         # test valid mesh objects before saving
         for obj_path in mesh_train_paths:
             points, _ = sample_points_from_mesh(obj_path, num_points=num_points_per_cloud)
+            points = points_remover(points, self.crop_min_bound, self.crop_max_bound)
             if points is not None:
                 train_stack.append(points)
 
         for obj_path in mesh_test_paths:
             points, _ = sample_points_from_mesh(obj_path, num_points=num_points_per_cloud)
+            points = points_remover(points, self.crop_min_bound, self.crop_max_bound)
             if points is not None:
                 test_stack.append(points)
 
@@ -139,20 +135,24 @@ if __name__ == '__main__':
     #  | | |> 02691156/
     #  | | | |> 1a04e3eab45ca15dd86060f189eb133/
     # Link to download https://shapenet.org/
-    dataset = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/',
-                              save_train_test_sets=False, mode='test')
-    data_loader = DataLoader(dataset, batch_size=16, shuffle=True, drop_last=True)
     resolution = [128, 128, 128]
     voxel_min_bound = [-0.5, -0.5, -0.5]
     voxel_max_bound = [0.5, 0.5, 0.5]
     voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
+
+    dataset = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/',
+                              save_train_test_sets=True, mode='test',
+                              crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound)
+    data_loader = DataLoader(dataset, batch_size=16, shuffle=True, drop_last=True)
+
     # Visualize some point clouds with Open3D
     for batch_id, data in enumerate(data_loader):
         x_batch = get_sparse_voxels_batch(data, voxel_size=voxel_size, voxel_min_bound=voxel_min_bound,
                                           voxel_max_bound=voxel_max_bound)
         total_occupied_voxels = torch.sum(x_batch)
         print('Total occupied voxels: {}'.format(total_occupied_voxels))
-        for i in range(len(data)):
+        # Visualize some point clouds and voxels
+        for i in range(5):
             points = data[i]
             print('Points shape: {}'.format(points.shape))
             visualize_points(points)

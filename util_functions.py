@@ -107,8 +107,6 @@ def get_sparse_voxels(points, voxel_size, point_weight, voxel_min_bound, voxel_m
     """
     if not isinstance(points, np.ndarray):
         points = points.cpu().data.numpy()
-        # Apply a filter for removing out-of-bound points
-        points = points_remover(points, voxel_min_bound, voxel_max_bound)
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points)
     voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud_within_bounds(
@@ -154,7 +152,7 @@ def get_sparse_voxels_batch(points_batch, voxel_size, point_weight=1.0, voxel_mi
 
 def points_remover(points, voxel_min_bound, voxel_max_bound):
     """
-    Remove points that are outside of the min_bound and max_bound
+    Remove points that are outside the min_bound and max_bound
     :param points: (N, 3)
     :param voxel_min_bound: min bound
     :param voxel_max_bound: max bound
