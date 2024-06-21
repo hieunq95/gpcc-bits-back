@@ -1,12 +1,12 @@
 import time
 import sys
+import argparse
 import numpy as np
 import torch
 import craystack as cs
 from craystack import bb_ans
 from torch import optim
-from torch.utils.data import DataLoader, Dataset
-from torchvision.utils import save_image
+from torch.utils.data import DataLoader
 from torch.distributions import Bernoulli
 from autograd.builtins import tuple as ag_tuple
 from dataset import ShapeNetDataset
@@ -22,14 +22,15 @@ else:
 print('Device: {}'.format(device))
 
 
-def train_convo_vae(continual_train=False, n_epochs=50):
+def train_convo_vae(continual_train=False, n_epochs=50, voxel_input=True):
     resolution = [128, 128, 128]
     voxel_min_bound = [-0.5, -0.5, -0.5]
     voxel_max_bound = [0.5, 0.5, 0.5]
-    voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
+    if not voxel_input:
+        voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
     train_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', save_train_test_sets=False,
-                                mode='train', device=device)
-    train_loader = DataLoader(train_set, batch_size=32, shuffle=True, drop_last=True)
+                                mode='train', device=device, return_voxel=True)
+    train_loader = DataLoader(train_set, batch_size=16, shuffle=True, drop_last=True)
 
     if continual_train:
         model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
@@ -46,10 +47,14 @@ def train_convo_vae(continual_train=False, n_epochs=50):
     for epoch in range(n_epochs):
         ep_loss = []
         for batch_id, data in enumerate(train_loader):
-            x_batch = get_sparse_voxels_batch(data, voxel_size=voxel_size, voxel_min_bound=voxel_min_bound,
-                                              voxel_max_bound=voxel_max_bound).to(device)
-            optimizer.zero_grad()
+            # Use get_sparse_voxels_batch() if we use raw point cloud as training data
+            if not voxel_input:
+                x_batch = get_sparse_voxels_batch(data, voxel_size=voxel_size, voxel_min_bound=voxel_min_bound,
+                                                  voxel_max_bound=voxel_max_bound).to(device)
+            else:
+                x_batch = data
             x_batch = torch.unsqueeze(x_batch, 1)
+            optimizer.zero_grad()
             t0 = time.time()
             loss = model.loss(x_batch)
             loss.backward()
@@ -73,12 +78,13 @@ def train_convo_vae(continual_train=False, n_epochs=50):
         plt.savefig('images/train_loss.png')
 
 
-def test_convo_vae():
+def test_convo_vae(voxel_input=True):
     print('Test model\n')
     resolution = [128, 128, 128]
     voxel_min_bound = [-0.5, -0.5, -0.5]
     voxel_max_bound = [0.5, 0.5, 0.5]
-    voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
+    if not voxel_input:
+        voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
     test_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', save_train_test_sets=False,
                                mode='test', device='cpu')
     test_loader = DataLoader(test_set, batch_size=32, shuffle=True, drop_last=True)
@@ -88,8 +94,11 @@ def test_convo_vae():
         print('Model: {}'.format(model))
         model.eval()
     for batch_idx, data in enumerate(test_loader):
-        x_batch = get_sparse_voxels_batch(data, voxel_size=voxel_size,
-                                          voxel_min_bound=voxel_min_bound, voxel_max_bound=voxel_max_bound)
+        if not voxel_input:
+            x_batch = get_sparse_voxels_batch(data, voxel_size=voxel_size,
+                                              voxel_min_bound=voxel_min_bound, voxel_max_bound=voxel_max_bound)
+        else:
+            x_batch = data
         x_batch = torch.unsqueeze(x_batch, 1)
         x_probs = model(x_batch)
         gen_probs = model.generate(x_batch.size()[0])
@@ -97,23 +106,32 @@ def test_convo_vae():
         x_gen_batch = Bernoulli(gen_probs).sample()
 
         for j in range(x_batch.size()[0]):
-            x_batch_j = torch.squeeze(x_batch[j])
-            x_recon_j = torch.squeeze(x_recon[j])
-            x_gen_j = torch.squeeze(x_gen_batch[j])
-            # Visualize results
-            x_ori_vis = data[j].detach().numpy()
-            visualize_points(x_ori_vis)
+            if not voxel_input:
+                x_batch_j = torch.squeeze(x_batch[j])
+                x_recon_j = torch.squeeze(x_recon[j])
+                x_gen_j = torch.squeeze(x_gen_batch[j])
+            else:
+                x_batch_j = x_batch[j]
+                x_recon_j = x_batch[j]
+                x_gen_j = x_batch[j]
+            if not voxel_input:
+                # Visualize results
+                x_ori_vis = data[j].detach().numpy()
+                print('Num points: {}'.format(len(x_ori_vis)))
+                visualize_points(x_ori_vis)
 
             x_vis = x_batch_j.detach().numpy()
+            print('Num voxels: {}'.format(np.sum(x_vis)))
             visualize_voxels(x_vis)
 
             x_rec_vis = x_recon_j.detach().numpy()
+            print('Num reconstructed voxels: {}'.format(np.sum(x_rec_vis)))
             visualize_voxels(x_rec_vis)
 
             x_gen_vis = x_gen_j.detach().numpy()
             visualize_voxels(x_gen_vis)
 
-def test_compress_methods(obs_precision=26):
+def test_compress_methods(batch_size=100, obs_precision=26):
     resolution = [128, 128, 128]
     voxel_min_bound = [-0.5, -0.5, -0.5]
     voxel_max_bound = [0.5, 0.5, 0.5]
@@ -124,7 +142,7 @@ def test_compress_methods(obs_precision=26):
     model.eval()
     test_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', save_train_test_sets=False,
                                mode='test', device=device)
-    test_loader = DataLoader(test_set, batch_size=200, shuffle=True, drop_last=True)
+    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, drop_last=True)
 
     rec_net = torch_fun_to_numpy_fun(model.encode)
     gen_net = torch_fun_to_numpy_fun(model.decode)
@@ -141,7 +159,7 @@ def bernoulli_ans(data, model, obs_precision, subset_size=1):
     # Entropy coding
     data_shape = data.size()
     num_data = data_shape[0]
-    num_voxels = np.prod(data_shape)
+    num_voxels = torch.sum(data)
     obs_shape = (subset_size, data_shape[1], data_shape[2], data_shape[3], data_shape[4])
     obs_size = np.prod(obs_shape)
     codec = lambda p: cs.Bernoulli(p, obs_precision)
@@ -193,7 +211,7 @@ def bits_back_vae_ans(data, gen_net, rec_net, obs_codec, obs_precision, subset_s
 
     data_shape = data.size()  # [b, 1, 128, 128, 128]
     num_data = data_shape[0]
-    num_voxels = num_data * np.prod(data_shape[1:])
+    num_voxels = torch.sum(data)
     # print('num_voxels: {}'.format(num_voxels))
     # num_voxels = num_data * 2000
     assert num_data % subset_size == 0
@@ -235,6 +253,15 @@ def bits_back_vae_ans(data, gen_net, rec_net, obs_codec, obs_precision, subset_s
 
 
 if __name__ == '__main__':
-    train_convo_vae(continual_train=False, n_epochs=50)
-    test_convo_vae()
-    test_compress_methods()
+    parser = argparse.ArgumentParser(description="Main script for running GPCC-Bits-back")
+    parser.add_argument('--mode', type=str, default='train',
+                        help='Use --mode arg for evaluation with arg = {train, test, compress}')
+    args = parser.parse_args()
+    if args.mode == 'train':
+        train_convo_vae(continual_train=False, n_epochs=50, voxel_input=True)
+    elif args.mode == 'test':
+        test_convo_vae(voxel_input=True)
+    elif args.mode == 'compress':
+        test_compress_methods(batch_size=100)
+    else:
+        parser.print_help()

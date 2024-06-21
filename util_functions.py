@@ -1,12 +1,13 @@
 import math
 import shutil
 import os
+import time
+import scipy
+
 import matplotlib.pyplot as plt
 import numpy as np
 import open3d as o3d
 import torch
-import constriction
-from sklearn.linear_model import Lasso
 
 
 def custom_draw_geometry_with_rotation(pcd, interactive=True, include_coordinate=True):
@@ -287,30 +288,25 @@ def torch_fun_to_numpy_fun(fun):
         return tensor_to_ndarray(fun(*torch_args, **kwargs))
     return numpy_fun
 
+def test_mps_device():
+    # Only works for Mac-OS
+    time_avg = []
+    device = 'mps'
+    for i in range(500):
+        t0 = time.time()
+        a_mps = torch.rand(size=(1000, 1000), device=device)
+        b_mps = torch.rand(size=(1000, 500), device=device)
+        c_mps = torch.matmul(a_mps, b_mps)
+        t1 = time.time()
+        time_avg.append(t1 - t0)
+    print('Time {} average: {}, std: {}'.format(device, np.mean(time_avg), np.std(time_avg)))
 
-def compress_bernoulli(x, probs, debug=False):
-    """
-    Compress a sequence of Bernoulli distributed data
-    :param x: Input sequence
-    :param probs: Probabilities of the sequence (e.g., output of the deep neural nets)
-    :return: Compressed binary sequence
-    """
-    message = np.array(x, dtype=np.int32)
-    entropy_model = constriction.stream.model.Bernoulli()
-    probabilities = np.array(probs, dtype=np.float64)
-    encoder = constriction.stream.stack.AnsCoder()
-    encoder.encode_reverse(message, entropy_model, probabilities)
-    compressed = encoder.get_compressed()
-    if debug:
-        # print('Compressed: {}'.format(compressed))
-        # print('Compressed_len / message_len: {} / {}'.format(len(compressed), len(message)))
-        bin_mess = [bin(word) for word in message]
-        bin_mess_compressed = [bin(word) for word in compressed]
-        # print('in binary: {}'.format(bin_mess_compressed))
-        print('binary_compressed_len: {}'.format(32 * len(bin_mess_compressed)))
-        print('binary_message_len: {}'.format(32 * len(bin_mess)))
-        print('Bits per voxels: {}'.format(len(bin_mess_compressed) / len(bin_mess)))
-    decoder = constriction.stream.stack.AnsCoder(compressed)
-    decoded = decoder.decode(entropy_model, probabilities)
-    assert np.all(decoded == message)
-    return compressed, decoded
+def import_dataset():
+    path = os.path.expanduser('~/Downloads/nyu_depth_v2_labeled.mat')
+    mat = scipy.io.loadmat(path)
+    print(mat)
+
+
+if __name__ == '__main__':
+    import_dataset()
+
