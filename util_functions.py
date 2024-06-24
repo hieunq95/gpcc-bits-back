@@ -3,8 +3,9 @@ import shutil
 import os
 import time
 import scipy
-
+import mat73
 import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
 import numpy as np
 import open3d as o3d
 import torch
@@ -303,8 +304,31 @@ def test_mps_device():
 
 def import_dataset():
     path = os.path.expanduser('~/Downloads/nyu_depth_v2_labeled.mat')
-    mat = scipy.io.loadmat(path)
-    print(mat)
+    nyu_dataset = mat73.loadmat(path)
+    keys = list(nyu_dataset.keys())
+    print(keys)
+    images = np.asarray(nyu_dataset['images'])
+    depths = np.asarray(nyu_dataset['depths'])
+    print('images: {}'.format(images.shape))
+    print('depths: {}'.format(depths.shape))
+    img_id = 0
+    img = images[:, :, :, img_id]
+    dep = depths[:, :, img_id]
+    # crop
+    img = img[:, :480, :]
+    dep = dep[:, :480]
+    print('img.shape: {}'.format(img.shape))
+    print('dep.shape: {}'.format(dep.shape))
+    plt.figure()
+    plt.imshow(img)
+    plt.figure()
+    plt.imshow(dep)
+    plt.show()
+    # Reconstruct point cloud with o3d
+    rgbd_depth = o3d.geometry.Image(dep.astype(np.uint8))
+    rgbd_color = o3d.geometry.Image(img.astype(np.float16))
+    rgbd_img = o3d.geometry.RGBDImage.create_from_color_and_depth(rgbd_color, rgbd_depth)
+    print('rgbd_img: {}'.format(rgbd_img))
 
 
 if __name__ == '__main__':

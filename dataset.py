@@ -1,4 +1,5 @@
 import os
+import argparse
 import open3d as o3d
 import numpy as np
 import torch
@@ -16,29 +17,23 @@ class ShapeNetDataset(Dataset):
         self.resolution = resolution
         self.crop_min_bound = crop_min_bound
         self.crop_max_bound = crop_max_bound
+        self.return_voxel = return_voxel
+        self.n_points_per_cloud = n_points_per_cloud
         self.voxel_size = (self.crop_max_bound[0] - self.crop_min_bound[0]) / self.resolution[0]
-        self.shape_classes = ['02691156', '02958343', '03001627', '03636649', '04256520', '04379243']
+        self.shape_classes = ['02691156', '02958343', '03001627', '03636649', '04256520',
+                              '04379243', '04530566', '04090263', '02924116', '03467517']
 
         if save_train_test_sets:
             # save train test datasets
             self.save_train_test_datasets(dir_path=os.path.expanduser('~/open3d_data/extract/processed_shapenet/'),
                                           num_meshes_per_class=n_mesh_per_class, num_points_per_cloud=n_points_per_cloud)
-        # load dataset
+        # load dataset with a fixed slice_window across the shape classes. This is to ensure the equal number of shapes
         if self.mode == 'train':
-            if not return_voxel:
-                self.dataset = self.load_dataset(
-                    os.path.expanduser('~/open3d_data/extract/processed_shapenet/shapenet_train_set.npy'))
-            else:
-                self.dataset = self.load_dataset(
-                    os.path.expanduser('~/open3d_data/extract/processed_shapenet/shapenet_voxel_train_set.npy')
-                )
+            slice_window = 600
         else:
-            if not return_voxel:
-                self.dataset = self.load_dataset(
-                    os.path.expanduser('~/open3d_data/extract/processed_shapenet/shapenet_test_set.npy'))
-            else:
-                self.dataset = self.load_dataset(
-                    os.path.expanduser('~/open3d_data/extract/processed_shapenet/shapenet_voxel_test_set.npy'))
+            slice_window = 150
+        self.dataset = self.load_dataset(slice_window=slice_window)
+        print('dataset shape: {}'.format(self.dataset.shape))
 
         # get 3D bounds
         if not return_voxel:
@@ -73,13 +68,11 @@ class ShapeNetDataset(Dataset):
         return mesh_obj_paths
 
     def save_train_test_datasets(self, dir_path, split_ratio=0.8, num_meshes_per_class=100, num_points_per_cloud=100):
-        mesh_train_paths = []
-        mesh_test_paths = []
-        train_stack = []
-        test_stack = []
-        train_voxel_stack = []
-        test_voxel_stack = []
         for shape_class in self.shape_classes:
+            train_stack = []
+            test_stack = []
+            train_voxel_stack = []
+            test_voxel_stack = []
             mesh_obj_paths = self.load_mesh_object_paths(shape_class, num_meshes_per_class)
             dataset_len = len(mesh_obj_paths)
             train_set_len = int(split_ratio * dataset_len)
@@ -89,47 +82,85 @@ class ShapeNetDataset(Dataset):
                 shape_class, len(train_paths), len(test_paths)))
 
             for trp in train_paths:
-                mesh_train_paths.append(trp)
+                points, _ = sample_points_from_mesh(trp, num_points=num_points_per_cloud)
+                points = points_remover(points, self.crop_min_bound, self.crop_max_bound)
+                voxels = get_sparse_voxels(points, voxel_size=self.voxel_size, point_weight=1.0,
+                                           voxel_min_bound=self.crop_min_bound, voxel_max_bound=self.crop_max_bound)
+                if points is not None:
+                    train_stack.append(points)
+                if voxels is not None and voxels.size()[0] == voxels.size()[1] == voxels.size()[2]:
+                    train_voxel_stack.append(voxels)
+            train_stack = np.asarray(train_stack)
+            # train_stack = np.reshape(train_stack, )
+            train_voxel_stack = np.asarray(train_voxel_stack, dtype=np.uint8)
+            save_train_path = dir_path + 'shapenet_train_set_{}.npy'.format(shape_class)
+            save_train_voxel_path = dir_path + 'shapenet_voxel_train_set_{}.npy'.format(shape_class)
+            print('Save train set: {}'.format(save_train_voxel_path))
+            np.save(save_train_path, train_stack)
+            np.save(save_train_voxel_path, train_voxel_stack)
+
             for tep in test_paths:
-                mesh_test_paths.append(tep)
+                points, _ = sample_points_from_mesh(tep, num_points=num_points_per_cloud)
+                points = points_remover(points, self.crop_min_bound, self.crop_max_bound)
+                voxels = get_sparse_voxels(points, voxel_size=self.voxel_size, point_weight=1.0,
+                                           voxel_min_bound=self.crop_min_bound, voxel_max_bound=self.crop_max_bound)
+                if points is not None:
+                    test_stack.append(points)
+                if voxels is not None and voxels.size()[0] == voxels.size()[1] == voxels.size()[2]:
+                    test_voxel_stack.append(voxels)
+            test_stack = np.asarray(test_stack)
+            test_voxel_stack = np.asarray(test_voxel_stack, dtype=np.uint8)
+            save_test_path = dir_path + 'shapenet_test_set_{}.npy'.format(shape_class)
+            save_test_voxel_path = dir_path + 'shapenet_voxel_test_set_{}.npy'.format(shape_class)
+            print('Save test set: {}'.format(save_test_voxel_path))
+            np.save(save_test_path, test_stack)
+            np.save(save_test_voxel_path, test_voxel_stack)
 
-        # test valid mesh objects before saving
-        for obj_path in mesh_train_paths:
-            points, _ = sample_points_from_mesh(obj_path, num_points=num_points_per_cloud)
-            points = points_remover(points, self.crop_min_bound, self.crop_max_bound)
-            voxels = get_sparse_voxels(points, voxel_size=self.voxel_size, point_weight=1.0,
-                                       voxel_max_bound=self.crop_max_bound, voxel_min_bound=self.crop_min_bound)
-            if points is not None:
-                train_stack.append(points)
-                train_voxel_stack.append(voxels.to(torch.int8))
+    def load_dataset(self, slice_window=160):
+        n_classes = len(self.shape_classes)
+        if self.return_voxel:
+            dataset = np.zeros(
+                shape=(n_classes * slice_window, self.resolution[0], self.resolution[1], self.resolution[2]),
+                dtype=np.uint8
+            )
+        else:
+            dataset = np.zeros(
+                shape=(n_classes * slice_window, self.n_points_per_cloud, 3),
+                dtype=np.float64
+            )
+        if self.mode == 'train':
+            if not self.return_voxel:
+                for i, shape_class in enumerate(self.shape_classes):
+                    f_path = os.path.expanduser(
+                        '~/open3d_data/extract/processed_shapenet/shapenet_train_set_{}.npy'.format(shape_class)
+                    )
+                    dataset_i = self.load_class_set(f_path)
+                    dataset[i*slice_window:(i + 1)*slice_window, :, :] = dataset_i[:slice_window]
+            else:
+                for i, shape_class in enumerate(self.shape_classes):
+                    f_path = os.path.expanduser(
+                        '~/open3d_data/extract/processed_shapenet/shapenet_voxel_train_set_{}.npy'.format(shape_class)
+                    )
+                    dataset_i = self.load_class_set(f_path)
+                    dataset[i*slice_window:(i + 1)*slice_window, :, :, :] = dataset_i[:slice_window]
+        else:
+            if not self.return_voxel:
+                for i, shape_class in enumerate(self.shape_classes):
+                    f_path = os.path.expanduser(
+                        '~/open3d_data/extract/processed_shapenet/shapenet_test_set_{}.npy'.format(shape_class)
+                    )
+                    dataset_i = self.load_class_set(f_path)
+                    dataset[i*slice_window:(i + 1)*slice_window, :, :] = dataset_i[:slice_window]
+            else:
+                for i, shape_class in enumerate(self.shape_classes):
+                    f_path = os.path.expanduser(
+                        '~/open3d_data/extract/processed_shapenet/shapenet_voxel_test_set_{}.npy'.format(shape_class)
+                    )
+                    dataset_i = self.load_class_set(f_path)
+                    dataset[i*slice_window:(i + 1)*slice_window, :, :, :] = dataset_i[:slice_window]
+        return dataset
 
-        for obj_path in mesh_test_paths:
-            points, _ = sample_points_from_mesh(obj_path, num_points=num_points_per_cloud)
-            points = points_remover(points, self.crop_min_bound, self.crop_max_bound)
-            voxels = get_sparse_voxels(points, voxel_size=self.voxel_size, point_weight=1.0,
-                                       voxel_max_bound=self.crop_max_bound, voxel_min_bound=self.crop_min_bound)
-            if points is not None:
-                test_stack.append(points)
-                test_voxel_stack.append(voxels.to(torch.int8))
-
-        train_stack = np.asarray(train_stack)
-        test_stack = np.asarray(test_stack)
-        print('Train set shape: {}, test set shape: {}'.format(train_stack.shape, test_stack.shape))
-        train_voxel_stack = np.asarray(train_voxel_stack)
-        test_voxel_stack = np.asarray(test_voxel_stack)
-
-        save_train_path = dir_path + 'shapenet_train_set.npy'
-        save_test_path = dir_path + 'shapenet_test_set.npy'
-        save_train_voxel_path = dir_path + 'shapenet_voxel_train_set.npy'
-        save_test_voxel_path = dir_path + 'shapenet_voxel_test_set.npy'
-        print('Save train set: {}'.format(save_train_path))
-        np.save(save_train_path, train_stack)
-        np.save(save_train_voxel_path, train_voxel_stack)
-        print('Save test set: {}'.format(save_test_path))
-        np.save(save_test_path, test_stack)
-        np.save(save_test_voxel_path, test_voxel_stack)
-
-    def load_dataset(self, path):
+    def load_class_set(self, path):
         pc_stack = np.load(path)
         print('Load dataset {}, shape: {}'.format(path, pc_stack.shape))
         return pc_stack
@@ -162,21 +193,31 @@ if __name__ == '__main__':
     #  | | |> 02691156/
     #  | | | |> 1a04e3eab45ca15dd86060f189eb133/
     # Link to download https://shapenet.org/
+    parser = argparse.ArgumentParser(description="Create new datasets from mesh objects")
+    parser.add_argument('--make', type=int, default=1,
+                        help='Create a new dataset from mesh objects: [0, 1]')
+    parser.add_argument('--mpc', type=int, default=1000,
+                        help='Number of meshes per class')
+    args = parser.parse_args()
+
     resolution = [128, 128, 128]
     voxel_min_bound = [-0.5, -0.5, -0.5]
     voxel_max_bound = [0.5, 0.5, 0.5]
     voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
-    new_datasets = True
+    if args.make == 0:
+        new_datasets = False
+    else:
+        new_datasets = True
 
     voxel_dataset = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', save_train_test_sets=new_datasets,
                                     mode='test', resolution=resolution,
                                     crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound,
-                                    n_points_per_cloud=20000, n_mesh_per_class=1000, return_voxel=True)
+                                    n_points_per_cloud=20000, n_mesh_per_class=args.mpc, return_voxel=True)
 
     points_dataset = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', save_train_test_sets=False,
                                      mode='test', resolution=resolution,
                                      crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound,
-                                     n_points_per_cloud=20000, n_mesh_per_class=1000, return_voxel=False)
+                                     n_points_per_cloud=20000, n_mesh_per_class=args.mpc, return_voxel=False)
 
     voxel_data_loader = DataLoader(voxel_dataset, batch_size=2, shuffle=True, drop_last=True)
     points_data_loader = DataLoader(points_dataset, batch_size=2, shuffle=True, drop_last=True)
