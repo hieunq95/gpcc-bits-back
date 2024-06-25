@@ -82,16 +82,13 @@ class ShapeNetDataset(Dataset):
                 shape_class, len(train_paths), len(test_paths)))
 
             for trp in train_paths:
-                points, _ = sample_points_from_mesh(trp, num_points=num_points_per_cloud)
-                points = points_remover(points, self.crop_min_bound, self.crop_max_bound)
+                points, _ = sample_points_from_mesh(trp, num_points=num_points_per_cloud,
+                                                    min_bound=self.crop_min_bound, max_bound=self.crop_max_bound)
                 voxels = get_sparse_voxels(points, voxel_size=self.voxel_size, point_weight=1.0,
                                            voxel_min_bound=self.crop_min_bound, voxel_max_bound=self.crop_max_bound)
-                if points is not None:
-                    train_stack.append(points)
-                if voxels is not None and voxels.size()[0] == voxels.size()[1] == voxels.size()[2]:
-                    train_voxel_stack.append(voxels)
+                train_stack.append(points)
+                train_voxel_stack.append(voxels)
             train_stack = np.asarray(train_stack)
-            # train_stack = np.reshape(train_stack, )
             train_voxel_stack = np.asarray(train_voxel_stack, dtype=np.uint8)
             save_train_path = dir_path + 'shapenet_train_set_{}.npy'.format(shape_class)
             save_train_voxel_path = dir_path + 'shapenet_voxel_train_set_{}.npy'.format(shape_class)
@@ -100,14 +97,12 @@ class ShapeNetDataset(Dataset):
             np.save(save_train_voxel_path, train_voxel_stack)
 
             for tep in test_paths:
-                points, _ = sample_points_from_mesh(tep, num_points=num_points_per_cloud)
-                points = points_remover(points, self.crop_min_bound, self.crop_max_bound)
+                points, _ = sample_points_from_mesh(tep, num_points=num_points_per_cloud,
+                                                    min_bound=self.crop_min_bound, max_bound=self.crop_max_bound)
                 voxels = get_sparse_voxels(points, voxel_size=self.voxel_size, point_weight=1.0,
                                            voxel_min_bound=self.crop_min_bound, voxel_max_bound=self.crop_max_bound)
-                if points is not None:
-                    test_stack.append(points)
-                if voxels is not None and voxels.size()[0] == voxels.size()[1] == voxels.size()[2]:
-                    test_voxel_stack.append(voxels)
+                test_stack.append(points)
+                test_voxel_stack.append(voxels)
             test_stack = np.asarray(test_stack)
             test_voxel_stack = np.asarray(test_voxel_stack, dtype=np.uint8)
             save_test_path = dir_path + 'shapenet_test_set_{}.npy'.format(shape_class)
@@ -194,15 +189,15 @@ if __name__ == '__main__':
     #  | | | |> 1a04e3eab45ca15dd86060f189eb133/
     # Link to download https://shapenet.org/
     parser = argparse.ArgumentParser(description="Create new datasets from mesh objects")
-    parser.add_argument('--make', type=int, default=1,
+    parser.add_argument('--make', type=int, default=0,
                         help='Create a new dataset from mesh objects: [0, 1]')
     parser.add_argument('--mpc', type=int, default=1000,
                         help='Number of meshes per class')
     args = parser.parse_args()
 
-    resolution = [128, 128, 128]
-    voxel_min_bound = [-0.5, -0.5, -0.5]
-    voxel_max_bound = [0.5, 0.5, 0.5]
+    resolution = np.full(3, 128, dtype=np.int32)
+    voxel_min_bound = np.full(3, -1.0)
+    voxel_max_bound = np.full(3, 1.0)
     voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
     if args.make == 0:
         new_datasets = False
@@ -225,7 +220,8 @@ if __name__ == '__main__':
     # Visualize some point clouds with Open3D
     for idx, x in enumerate(voxel_data_loader):
         voxel = x[0]
-        visualize_voxels(voxel)
+        visualize_voxels(voxel, voxel_size*40)
+        print('Occupied voxels: {}'.format(torch.sum(voxel)))
         if idx == 3:
             break
 

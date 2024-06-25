@@ -23,9 +23,9 @@ print('Device: {}'.format(device))
 
 
 def train_convo_vae(train_from_scratch=False, n_epochs=50, voxelization=True, learning_rate=0.001):
-    resolution = [128, 128, 128]
-    voxel_min_bound = [-0.5, -0.5, -0.5]
-    voxel_max_bound = [0.5, 0.5, 0.5]
+    resolution = np.full(3, 128, dtype=np.int32)
+    voxel_min_bound = np.full(3, -1.0)
+    voxel_max_bound = np.full(3, 1.0)
     voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
     train_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', save_train_test_sets=False,
                                 mode='train', resolution=resolution, device=device,
@@ -35,8 +35,9 @@ def train_convo_vae(train_from_scratch=False, n_epochs=50, voxelization=True, le
 
     if not train_from_scratch:
         model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
-        model.load_state_dict(torch.load('model_params/cvae_params', map_location=device))
-        print('Load pre-trained model ...')
+        if os.path.isfile('model_params/cvae_params'):
+            model.load_state_dict(torch.load('model_params/cvae_params', map_location=device))
+            print('Load pre-trained model ...')
     else:
         model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
 
@@ -81,13 +82,12 @@ def train_convo_vae(train_from_scratch=False, n_epochs=50, voxelization=True, le
         plt.savefig('images/train_loss.png')
 
 
-def test_convo_vae(voxelization=True, epoch_id=None):
+def test_convo_vae(voxelization=True, generate=True, epoch_id=None):
     print('Test model\n')
-    resolution = [128, 128, 128]
-    voxel_min_bound = [-0.5, -0.5, -0.5]
-    voxel_max_bound = [0.5, 0.5, 0.5]
-    if not voxelization:
-        voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
+    resolution = np.full(3, 128, dtype=np.int32)
+    voxel_min_bound = np.full(3, -1.0)
+    voxel_max_bound = np.full(3, 1.0)
+    voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
     test_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', save_train_test_sets=False,
                                 mode='test', resolution=resolution, device='cpu',
                                 crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound,
@@ -115,7 +115,6 @@ def test_convo_vae(voxelization=True, epoch_id=None):
         x_gen_batch = Bernoulli(gen_probs).sample()
 
         for j in range(x_batch.size()[0]):
-
             x_batch_j = torch.squeeze(x_batch[j])
             x_recon_j = torch.squeeze(x_recon[j])
             x_gen_j = torch.squeeze(x_gen_batch[j])
@@ -123,30 +122,46 @@ def test_convo_vae(voxelization=True, epoch_id=None):
                 # Visualize results
                 x_ori_vis = data[j].detach().numpy()
                 print('Num points: {}'.format(len(x_ori_vis)))
-                visualize_points(x_ori_vis)
+                try:
+                    visualize_points(x_ori_vis)
+                except KeyboardInterrupt:
+                    sys.exit(130)
 
-            x_vis = x_batch_j.detach().numpy()
-            print('Num voxels: {}'.format(np.sum(x_vis)))
-            visualize_voxels(x_vis)
+            if not generate:
+                x_vis = x_batch_j.detach().numpy()
+                print('Num voxels: {}'.format(np.sum(x_vis)))
+                try:
+                    visualize_voxels(x_vis, voxel_size*40)
+                except KeyboardInterrupt:
+                    sys.exit()
 
-            x_rec_vis = x_recon_j.detach().numpy()
-            print('Num reconstructed voxels: {}'.format(np.sum(x_rec_vis)))
-            visualize_voxels(x_rec_vis)
+                x_rec_vis = x_recon_j.detach().numpy()
+                print('Num reconstructed voxels: {}'.format(np.sum(x_rec_vis)))
+                try:
+                    visualize_voxels(x_rec_vis, voxel_size*40)
+                except KeyboardInterrupt:
+                    sys.exit()
+            else:
+                x_gen_vis = x_gen_j.detach().numpy()
+                try:
+                    visualize_voxels(x_gen_vis, voxel_size*40)
+                except KeyboardInterrupt:
+                    sys.exit()
 
-            x_gen_vis = x_gen_j.detach().numpy()
-            visualize_voxels(x_gen_vis)
 
-def test_compress_methods(batch_size=100, obs_precision=26):
-    resolution = [128, 128, 128]
-    voxel_min_bound = [-0.5, -0.5, -0.5]
-    voxel_max_bound = [0.5, 0.5, 0.5]
+def test_compress_methods(batch_size=100, subset_size=10, epoch_id=200, obs_precision=25):
+    resolution = np.full(3, 128, dtype=np.int32)
+    voxel_min_bound = np.full(3, -1.0)
+    voxel_max_bound = np.full(3, 1.0)
     voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
     model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
-    model.load_state_dict(torch.load('model_params/cvae_params', map_location='cpu'))
+    model.load_state_dict(torch.load('model_params/cvae_params_{}'.format(epoch_id), map_location='cpu'))
     print('Model: {}'.format(model))
     model.eval()
     test_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', save_train_test_sets=False,
-                               mode='test', device=device)
+                                mode='test', resolution=resolution, device='cpu',
+                                crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound,
+                                n_points_per_cloud=20000, n_mesh_per_class=1000, return_voxel=True)
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, drop_last=True)
 
     rec_net = torch_fun_to_numpy_fun(model.encode)
@@ -157,20 +172,22 @@ def test_compress_methods(batch_size=100, obs_precision=26):
         # x_batch = get_sparse_voxels_batch(data, voxel_size=voxel_size,
         #                                   voxel_min_bound=voxel_min_bound, voxel_max_bound=voxel_max_bound)
         x_batch = torch.unsqueeze(data, 1)
-        bits_back_vae_ans(x_batch, gen_net, rec_net, obs_codec, obs_precision, 1)
-        bernoulli_ans(x_batch, model, obs_precision, 1)
+        bits_back_vae_ans(x_batch, gen_net, rec_net, obs_codec, obs_precision, subset_size)
+        bernoulli_ans(x_batch, model, obs_precision, subset_size)
 
 def bernoulli_ans(data, model, obs_precision, subset_size=1):
     # Entropy coding
     data_shape = data.size()
     num_data = data_shape[0]
     num_voxels = torch.sum(data)
+    # num_voxels = np.prod(data_shape)
     obs_shape = (subset_size, data_shape[1], data_shape[2], data_shape[3], data_shape[4])
     obs_size = np.prod(obs_shape)
+    latent_size = np.prod((subset_size, model.latent_dim))
     codec = lambda p: cs.Bernoulli(p, obs_precision)
 
     # Encode data using small batches (preventing forward big batch of data -> crash)
-    init_message = cs.base_message(obs_shape)
+    init_message = cs.base_message(obs_size)
     # print('NoBB_ANS init size: {}'.format(init_message[0].shape))
     # split data for using substack
     assert num_data % subset_size == 0
@@ -179,10 +196,10 @@ def bernoulli_ans(data, model, obs_precision, subset_size=1):
     t0 = time.time()
     data_tuple = torch.split(data, subset_size)
     for x in data_tuple:  # small batches
-        p = model(x).detach().numpy()
+        p = model(x).detach().numpy().flatten()
         push, pop = codec(p)
         pop_array.append(pop)
-        message, = push(message, np.uint64(x.detach().numpy()))
+        message, = push(message, np.asarray(x.detach().numpy().flatten(), dtype=np.uint8))
     t1 = time.time()
     flat_message = cs.flatten(message)
     pop_size = 0
@@ -190,26 +207,29 @@ def bernoulli_ans(data, model, obs_precision, subset_size=1):
         p_size = sys.getsizeof(p) * 32  # in bits
         pop_size += p_size
     flat_message_len = 32 * len(flat_message)
-    print('NoBB_VAE -- encoded in {} seconds, bpv: {}, bpv_overhead: {}'.format(t1 - t0,
-        flat_message_len / num_voxels, (pop_size + flat_message_len) / num_voxels))
+    print('NoBB_VAE -- encoded in {} seconds, bpv: {}, bpv_overhead: {}'.format(
+        t1 - t0, flat_message_len / num_voxels, (pop_size + flat_message_len) / num_voxels)
+    )
 
     # Decode message
     t0 = time.time()
-    message_ = cs.unflatten(flat_message, obs_shape)
+    message_ = cs.unflatten(flat_message, obs_size)
     data_decoded = []
     for i in range(len(pop_array)):
         pop = pop_array[-1-i]  # reverse order
         message_, data_ = pop(message_,)
+        data_decoded.append(np.asarray(data_, dtype=np.uint8))  # cast dtype to prevent out of memory issue
         # print('data_ shape: {}'.format(data_.shape))
-        data_decoded.append(data_)
+        # print('decoded iter: {}'.format(i))
     t1 = time.time()
+
     data_decoded = reversed(data_decoded)
     for x, x_ in zip(data_tuple, data_decoded):
-        np.testing.assert_equal(x.detach().numpy(), x_)
+        np.testing.assert_equal(x.detach().numpy().flatten(), x_)
     print('NoBB_VAE -- decoded in {} seconds\n'.format(t1 - t0))
 
 
-def bits_back_vae_ans(data, gen_net, rec_net, obs_codec, obs_precision, subset_size=10):
+def bits_back_vae_ans(data, gen_net, rec_net, obs_codec, obs_precision, subset_size=1):
     def vae_view(head):
         return ag_tuple((np.reshape(head[:latent_size], latent_shape),
                          np.reshape(head[latent_size:], obs_shape)))
@@ -217,6 +237,7 @@ def bits_back_vae_ans(data, gen_net, rec_net, obs_codec, obs_precision, subset_s
     data_shape = data.size()  # [b, 1, 128, 128, 128]
     num_data = data_shape[0]
     num_voxels = torch.sum(data)
+    # num_voxels = np.prod(data_shape)
     # print('num_voxels: {}'.format(num_voxels))
     # num_voxels = num_data * 2000
     assert num_data % subset_size == 0
@@ -229,7 +250,7 @@ def bits_back_vae_ans(data, gen_net, rec_net, obs_codec, obs_precision, subset_s
 
     print('Bits-back VAE compress {} point clouds...'.format(num_data))
 
-    data = np.split(data.detach().numpy(), num_subsets)
+    data = np.split(np.asarray(data.detach().numpy(), dtype=np.uint8), num_subsets)
 
     # Create codec
     vae_append, vae_pop = cs.repeat(cs.substack(
@@ -245,8 +266,13 @@ def bits_back_vae_ans(data, gen_net, rec_net, obs_codec, obs_precision, subset_s
     flat_message_len = 32 * len(flat_message)
     t1 = time.time()
     pop_size = sys.getsizeof(vae_pop) * 32  # in bits
-    print('BB_VAE -- encoded in {} seconds, bpv: {}, bpv_overhead: {}'.format(t1 - t0, flat_message_len / num_voxels,
-                                                                          (pop_size + flat_message_len) / num_voxels))
+    print('BB_VAE -- encoded in {} seconds, bpv: {}, bpv_overhead: {}'.format(
+        t1 - t0, flat_message_len / num_voxels, (pop_size + flat_message_len) / num_voxels)
+    )
+    np.save(
+        os.path.expanduser('~/open3d_data/extract/compressed_shapenet_{}.npy'.format(num_data)),
+        flat_message
+    )
 
     # Decode
     t0 = time.time()
@@ -269,6 +295,10 @@ if __name__ == '__main__':
                         help='Learning rate for the optimizer, e.g., Adam')
     parser.add_argument('--voxel', type=int, default=1,
                         help='Only use this when we train on raw point clouds: [0, 1]')
+    parser.add_argument('--batch', type=int, default=200,
+                        help='Batch size of test set for compression')
+    parser.add_argument('--generate', type=int, default=0,
+                        help='Use 1 if we want to generate random samples from the model')
     args = parser.parse_args()
     voxel_input = True
     if args.voxel == 0:
@@ -279,8 +309,11 @@ if __name__ == '__main__':
         else:
             train_convo_vae(train_from_scratch=True, n_epochs=args.ep, voxelization=voxel_input, learning_rate=args.lr)
     elif args.mode == 'test':
-        test_convo_vae(voxelization=voxel_input, epoch_id=args.ep)
+        if args.generate == 1:
+            test_convo_vae(voxelization=voxel_input, generate=True, epoch_id=args.ep)
+        else:
+            test_convo_vae(voxelization=voxel_input, generate=False, epoch_id=args.ep)
     elif args.mode == 'compress':
-        test_compress_methods(batch_size=100)
+        test_compress_methods(batch_size=args.batch, subset_size=1, epoch_id=args.ep)
     else:
         parser.print_help()

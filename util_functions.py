@@ -1,9 +1,11 @@
 import math
 import shutil
 import os
+import sys
 import time
 import scipy
 import mat73
+import re
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import numpy as np
@@ -41,7 +43,7 @@ def visualize_points(points, interactive=True):
     custom_draw_geometry_with_rotation(pcd, interactive=interactive)
 
 
-def visualize_voxels(voxel_cube):
+def visualize_voxels(voxel_cube, voxel_size):
     """
     Visualize 3D sparse voxel cubes `[height, width, length]`
     :param voxel_cube:
@@ -52,7 +54,7 @@ def visualize_voxels(voxel_cube):
     points = np.vstack(indices).T.astype(np.float32)
     point_cloud = o3d.geometry.PointCloud()
     point_cloud.points = o3d.utility.Vector3dVector(points)
-    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(point_cloud, voxel_size=1)
+    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(point_cloud, voxel_size=voxel_size)
     o3d.visualization.draw_geometries([voxel_grid])
 
 
@@ -67,7 +69,8 @@ def load_mesh_object(file_path, compute_vertex=False, visualize=False):
     return mesh
 
 
-def sample_points_from_mesh(file_path, num_points=5000, visualize=False, print_log=False):
+def sample_points_from_mesh(file_path, num_points=5000, min_bound=(-1.0, -1.0, -1.0), max_bound=(1.0, 1.0, 1.0),
+                            visualize=False, print_log=False):
     """
     Sample uniformly points from a mesh. Return None if the mesh object fails to be loaded
     """
@@ -84,6 +87,7 @@ def sample_points_from_mesh(file_path, num_points=5000, visualize=False, print_l
         pcd = None
     if pcd is not None:
         points = np.asarray(pcd.points)
+        points = rescale_points(points, pcd.get_min_bound(), pcd.get_max_bound(), min_bound, max_bound)
     if print_log and pcd is not None:
         print('points.shape: {}'.format(points.shape))
         print('Point cloud bounds: {}, {}'.format(pcd.get_min_bound(), pcd.get_max_bound()))
@@ -152,6 +156,23 @@ def get_sparse_voxels_batch(points_batch, voxel_size, point_weight=1.0, voxel_mi
     return torch.cat(grid_voxels_batches, 0).float()
 
 
+def rescale_points(points, origin_min_bound, origin_max_bound, new_min_bound, new_max_bound):
+    """
+    Rescale the point cloud for training/testing
+    :param points:
+    :param origin_min_bound: Original min bounds of the point cloud
+    :param origin_max_bound: Original max bounds
+    :param new_min_bound: Rescaled min bounds of the point cloud
+    :param new_max_bound: Rescaled max bounds
+    :return: points: (N, 3)
+    """
+    desired_scale = np.max(new_max_bound) - np.min(new_min_bound)
+    origin_scale = np.max(origin_max_bound) - np.min(origin_min_bound)
+    mean_point = np.mean(points, axis=0)
+    points = (points - mean_point) * desired_scale / origin_scale
+    points = points_remover(points, new_min_bound, new_max_bound)
+    return points
+
 def points_remover(points, voxel_min_bound, voxel_max_bound):
     """
     Remove points that are outside the min_bound and max_bound
@@ -161,12 +182,10 @@ def points_remover(points, voxel_min_bound, voxel_max_bound):
     :return: points: (N, 3)
     """
     for i in range(len(points)):
-        points[i][0] = 0 if points[i][0] < voxel_min_bound[0] else points[i][0]
-        points[i][0] = 0 if points[i][0] > voxel_max_bound[0] else points[i][0]
-        points[i][1] = 0 if points[i][1] < voxel_min_bound[1] else points[i][1]
-        points[i][1] = 0 if points[i][1] > voxel_max_bound[1] else points[i][1]
-        points[i][2] = 0 if points[i][2] < voxel_min_bound[2] else points[i][2]
-        points[i][2] = 0 if points[i][2] > voxel_max_bound[2] else points[i][2]
+        if not (voxel_min_bound[0] < points[i][0] < voxel_max_bound[0]
+        and voxel_min_bound[1] < points[i][1] < voxel_max_bound[1]
+        and voxel_min_bound[2] < points[i][2] < voxel_max_bound[2]):
+            points[i][:] = 0
     return points
 
 def zero_padding(points_3d, axis, val, patch_size):
@@ -302,35 +321,87 @@ def test_mps_device():
         time_avg.append(t1 - t0)
     print('Time {} average: {}, std: {}'.format(device, np.mean(time_avg), np.std(time_avg)))
 
-def import_dataset():
-    path = os.path.expanduser('~/Downloads/nyu_depth_v2_labeled.mat')
-    nyu_dataset = mat73.loadmat(path)
-    keys = list(nyu_dataset.keys())
-    print(keys)
-    images = np.asarray(nyu_dataset['images'])
-    depths = np.asarray(nyu_dataset['depths'])
-    print('images: {}'.format(images.shape))
-    print('depths: {}'.format(depths.shape))
-    img_id = 0
-    img = images[:, :, :, img_id]
-    dep = depths[:, :, img_id]
-    # crop
-    img = img[:, :480, :]
-    dep = dep[:, :480]
-    print('img.shape: {}'.format(img.shape))
-    print('dep.shape: {}'.format(dep.shape))
-    plt.figure()
-    plt.imshow(img)
-    plt.figure()
-    plt.imshow(dep)
-    plt.show()
-    # Reconstruct point cloud with o3d
-    rgbd_depth = o3d.geometry.Image(dep.astype(np.uint8))
-    rgbd_color = o3d.geometry.Image(img.astype(np.float16))
-    rgbd_img = o3d.geometry.RGBDImage.create_from_color_and_depth(rgbd_color, rgbd_depth)
-    print('rgbd_img: {}'.format(rgbd_img))
+def import_dataset(save_img=True):
+    def rgb_to_grayscale(rgb_image, width=480):
+        # Define the weights for each channel
+        weights = np.array([0.2989, 0.5870, 0.1140])
+
+        # Compute the dot product of the image and the weights
+        gray_image = np.dot(rgb_image[..., :3], weights)
+
+        # Reshape to add an additional dimension for consistency
+        gray_image = gray_image.reshape((width, width, 1))
+
+        return gray_image
+    if save_img:
+        path = os.path.expanduser('~/Downloads/nyu_depth_v2_labeled.mat')
+        save_path = os.path.expanduser('~/open3d_data/extract/processed_nyu/')
+        nyu_dataset = mat73.loadmat(path)
+        keys = list(nyu_dataset.keys())
+        print(keys)
+        images = np.asarray(nyu_dataset['images'])
+        depths = np.asarray(nyu_dataset['depths'])
+        print('images: {}'.format(images.shape))  # [H, W, 3, N]
+        print('depths: {}'.format(depths.shape))  # [H, W, N]
+        (W, H, N) = depths.shape
+        depths = depths[:, :W, :]
+        images = images[:, :W, :, :]
+        gray_images = np.zeros(shape=(W, W, 1, N), dtype=np.float32)
+        for i in range(N):
+            gray_images[:, :, :, i] = rgb_to_grayscale(images[:, :, :, i], width=W)
+
+        depths = np.ascontiguousarray(depths).astype(np.float32)
+        gray_images = np.ascontiguousarray(gray_images).astype(np.float32) / 255.0
+        print('Save NYU dataset to ' + save_path)
+        np.save(os.path.expanduser(save_path + 'nyu_depths'), depths)
+        np.save(os.path.expanduser(save_path + 'nyu_images'), gray_images)
+    else:
+        depths = np.load(os.path.expanduser('~/open3d_data/extract/processed_nyu/nyu_depths.npy'))
+        images = np.load(os.path.expanduser('~/open3d_data/extract/processed_nyu/nyu_images.npy'))
+        print('depths: {}'.format(depths.shape))
+        print('images: {}'.format(images.shape))
+        for i in range(10):
+            dep = np.ascontiguousarray(depths[:, :, -i])
+            img = np.ascontiguousarray(images[:, :, :, -i])
+            rgbd_depth = o3d.geometry.Image(dep)
+            rgbd_color = o3d.geometry.Image(img)
+            rgbd_img = o3d.geometry.RGBDImage.create_from_color_and_depth(rgbd_color, rgbd_depth)
+            print('rgbd_img: {}'.format(rgbd_img))
+            pcd = o3d.geometry.PointCloud.create_from_rgbd_image(
+                rgbd_img,
+                o3d.camera.PinholeCameraIntrinsic(
+                    o3d.camera.PinholeCameraIntrinsicParameters.PrimeSenseDefault))
+            # Flip it, otherwise the pointcloud will be upside down
+            pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
+            print(pcd)
+            points = np.asarray(pcd.points)
+            # visualize_points(points)
+            # Rescale point cloud
+            voxel_min_bound = np.full(3, -1.0)
+            voxel_max_bound = np.full(3, 1.0)
+            shape = np.full(3, 128, dtype=np.int32)
+            points = rescale_points(points, pcd.get_min_bound(), pcd.get_max_bound(), voxel_min_bound, voxel_max_bound)
+            visualize_points(points)
+            voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / shape[0]
+            voxels = get_sparse_voxels(points, voxel_min_bound=voxel_min_bound, voxel_max_bound=voxel_max_bound,
+                                       voxel_size=voxel_size, point_weight=1.0)
+            visualize_voxels(voxels, voxel_size*20)
+            ocv = torch.sum(voxels)
+            print('voxels.size(): {}'.format(voxels.size()))
+            print('ocv: {}'.format(ocv))
+
+            # octree
+            voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(pcd, voxel_size=0.00005)
+            o3d.visualization.draw_geometries([voxel_grid])
+            octree = o3d.geometry.Octree(max_depth=7)
+            octree.create_from_voxel_grid(voxel_grid)
+            o3d.visualization.draw_geometries([octree])
+            print('octree: {}'.format(octree))
+            print('size of octree: {}'.format(sys.getsizeof(octree)))
+            print('size of voxels: {}'.format(sys.getsizeof(voxels)))
+            print(octree.root_node)
 
 
 if __name__ == '__main__':
-    import_dataset()
+    import_dataset(save_img=False)
 
