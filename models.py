@@ -76,8 +76,11 @@ class ConvoVAE(nn.Module):
         mu, log_var = self.encode(x)
         z = self.reparameterize(mu, log_var)
         x_probs = self.decode(z)
-        dist = Bernoulli(x_probs.view(-1, self.in_dim[0] * self.in_dim[1] * self.in_dim[2]))
-        l = torch.sum(dist.log_prob(x.view(-1, self.in_dim[0] * self.in_dim[1] * self.in_dim[2])), dim=1)
+        # dist = Bernoulli(x_probs.view(-1, self.in_dim[0] * self.in_dim[1] * self.in_dim[2]))
+        # l = torch.sum(dist.log_prob(x.view(-1, self.in_dim[0] * self.in_dim[1] * self.in_dim[2])), dim=1)
+        # weighted binary cross entropy for reconstruction loss
+        l = -F.binary_cross_entropy_with_logits(x_probs, x, reduction='sum',
+                                                pos_weight=torch.full(self.in_dim.tolist(), 0.97))
         p_z = torch.sum(Normal(0, 1).log_prob(z), dim=1)
         q_z = torch.sum(Normal(mu, log_var).log_prob(z), dim=1)
         return -torch.mean(l + p_z - q_z) * 1.4425 / (self.in_dim[0] * self.in_dim[1] * self.in_dim[2])

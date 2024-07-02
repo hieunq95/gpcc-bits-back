@@ -27,10 +27,17 @@ def train_convo_vae(train_from_scratch=False, n_epochs=50, voxelization=True, le
     voxel_min_bound = np.full(3, -1.0)
     voxel_max_bound = np.full(3, 1.0)
     voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
-    train_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', save_train_test_sets=False,
-                                mode='train', resolution=resolution, device=device,
-                                crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound,
-                                n_points_per_cloud=20000, n_mesh_per_class=1000, return_voxel=voxelization)
+    if voxelization:
+        train_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', save_train_test_sets=False,
+                                    mode='train', resolution=resolution, device=device,
+                                    crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound,
+                                    n_points_per_cloud=20000, n_mesh_per_class=2000, return_voxel=True)
+    else:
+        train_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', save_train_test_sets=False,
+                                    mode='train', resolution=resolution, device=device,
+                                    crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound,
+                                    n_points_per_cloud=20000, n_mesh_per_class=2000, return_voxel=False)
+
     train_loader = DataLoader(train_set, batch_size=32, shuffle=True, drop_last=True)
 
     if not train_from_scratch:
@@ -44,13 +51,14 @@ def train_convo_vae(train_from_scratch=False, n_epochs=50, voxelization=True, le
     model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     print('Model: {}'.format(model))
+    print('Optimizer: {}'.format(optimizer))
     loss_avg = []
 
     for epoch in range(1, n_epochs + 1):
         ep_loss = []
         for batch_id, data in enumerate(train_loader):
             # Use get_sparse_voxels_batch() if we use raw point cloud as training data
-            if not voxel_input:
+            if not voxelization:
                 x_batch = get_sparse_voxels_batch(data, voxel_size=voxel_size, voxel_min_bound=voxel_min_bound,
                                                   voxel_max_bound=voxel_max_bound).to(device)
             else:
@@ -82,7 +90,7 @@ def train_convo_vae(train_from_scratch=False, n_epochs=50, voxelization=True, le
         plt.savefig('images/train_loss.png')
 
 
-def test_convo_vae(voxelization=True, generate=True, epoch_id=None):
+def test_convo_vae(voxelization=True, batch_size=32, generate=True, epoch_id=None):
     print('Test model\n')
     resolution = np.full(3, 128, dtype=np.int32)
     voxel_min_bound = np.full(3, -1.0)
@@ -92,7 +100,7 @@ def test_convo_vae(voxelization=True, generate=True, epoch_id=None):
                                 mode='test', resolution=resolution, device='cpu',
                                 crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound,
                                 n_points_per_cloud=20000, n_mesh_per_class=1000, return_voxel=voxelization)
-    test_loader = DataLoader(test_set, batch_size=32, shuffle=True, drop_last=True)
+    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, drop_last=True)
     if epoch_id is not None:
         f_name = 'model_params/cvae_params_{}'.format(epoch_id)
     else:
@@ -114,6 +122,9 @@ def test_convo_vae(voxelization=True, generate=True, epoch_id=None):
         x_recon = Bernoulli(x_probs).sample()
         x_gen_batch = Bernoulli(gen_probs).sample()
 
+        batch_iou = calculate_iou(x_batch, x_recon)
+        print('Batch IoU: {} / batch size: {}'.format(batch_iou, batch_size))
+
         for j in range(x_batch.size()[0]):
             x_batch_j = torch.squeeze(x_batch[j])
             x_recon_j = torch.squeeze(x_recon[j])
@@ -128,21 +139,24 @@ def test_convo_vae(voxelization=True, generate=True, epoch_id=None):
                     sys.exit(130)
 
             if not generate:
-                x_vis = x_batch_j.detach().numpy()
+                x_vis = x_batch_j.detach().numpy().astype(np.int32)
                 print('Num voxels: {}'.format(np.sum(x_vis)))
                 try:
                     visualize_voxels(x_vis, voxel_size*40)
                 except KeyboardInterrupt:
                     sys.exit()
 
-                x_rec_vis = x_recon_j.detach().numpy()
-                print('Num reconstructed voxels: {}'.format(np.sum(x_rec_vis)))
+                x_rec_vis = x_recon_j.detach().numpy().astype(np.int32)
                 try:
+                    # psnr_i = calculate_psnr(x_vis, x_rec_vis)
+                    iou_i = calculate_iou(x_vis, x_rec_vis)
+                    acc_i = calculate_accuracy(x_vis, x_rec_vis)
+                    print('IoU per voxel: {} / Accuracy per voxel: {}'.format(iou_i, acc_i))
                     visualize_voxels(x_rec_vis, voxel_size*40)
                 except KeyboardInterrupt:
                     sys.exit()
             else:
-                x_gen_vis = x_gen_j.detach().numpy()
+                x_gen_vis = x_gen_j.detach().numpy().astype(np.int32)
                 try:
                     visualize_voxels(x_gen_vis, voxel_size*40)
                 except KeyboardInterrupt:
@@ -179,8 +193,8 @@ def bernoulli_ans(data, model, obs_precision, subset_size=1):
     # Entropy coding
     data_shape = data.size()
     num_data = data_shape[0]
-    num_voxels = torch.sum(data)
-    # num_voxels = np.prod(data_shape)
+    # num_voxels = torch.sum(data)
+    num_voxels = np.prod(data_shape)
     obs_shape = (subset_size, data_shape[1], data_shape[2], data_shape[3], data_shape[4])
     obs_size = np.prod(obs_shape)
     latent_size = np.prod((subset_size, model.latent_dim))
@@ -236,8 +250,8 @@ def bits_back_vae_ans(data, gen_net, rec_net, obs_codec, obs_precision, subset_s
 
     data_shape = data.size()  # [b, 1, 128, 128, 128]
     num_data = data_shape[0]
-    num_voxels = torch.sum(data)
-    # num_voxels = np.prod(data_shape)
+    # num_voxels = torch.sum(data)
+    num_voxels = np.prod(data_shape)
     # print('num_voxels: {}'.format(num_voxels))
     # num_voxels = num_data * 2000
     assert num_data % subset_size == 0
@@ -287,7 +301,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Main script for running GPCC-Bits-back")
     parser.add_argument('--mode', type=str, default='train',
                         help='Evaluation mode: [train, test, compress]')
-    parser.add_argument('--ep', type=int, default=50,
+    parser.add_argument('--ep', type=int, default=200,
                         help='Number of training epochs')
     parser.add_argument('--init', type=int, default=1,
                         help='Only use this when we train from scratch: [0, 1]')
@@ -295,9 +309,9 @@ if __name__ == '__main__':
                         help='Learning rate for the optimizer, e.g., Adam')
     parser.add_argument('--voxel', type=int, default=1,
                         help='Only use this when we train on raw point clouds: [0, 1]')
-    parser.add_argument('--batch', type=int, default=200,
+    parser.add_argument('--batch', type=int, default=32,
                         help='Batch size of test set for compression')
-    parser.add_argument('--generate', type=int, default=0,
+    parser.add_argument('--gen', type=int, default=0,
                         help='Use 1 if we want to generate random samples from the model')
     args = parser.parse_args()
     voxel_input = True
@@ -309,10 +323,10 @@ if __name__ == '__main__':
         else:
             train_convo_vae(train_from_scratch=True, n_epochs=args.ep, voxelization=voxel_input, learning_rate=args.lr)
     elif args.mode == 'test':
-        if args.generate == 1:
-            test_convo_vae(voxelization=voxel_input, generate=True, epoch_id=args.ep)
+        if args.gen == 1:
+            test_convo_vae(voxelization=voxel_input, batch_size=args.batch, generate=True, epoch_id=args.ep)
         else:
-            test_convo_vae(voxelization=voxel_input, generate=False, epoch_id=args.ep)
+            test_convo_vae(voxelization=voxel_input, batch_size=args.batch, generate=False, epoch_id=args.ep)
     elif args.mode == 'compress':
         test_compress_methods(batch_size=args.batch, subset_size=1, epoch_id=args.ep)
     else:

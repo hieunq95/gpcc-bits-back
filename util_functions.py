@@ -52,10 +52,11 @@ def visualize_voxels(voxel_cube, voxel_size):
     voxel_cube = np.asarray(voxel_cube)
     indices = np.nonzero(voxel_cube)
     points = np.vstack(indices).T.astype(np.float32)
-    point_cloud = o3d.geometry.PointCloud()
-    point_cloud.points = o3d.utility.Vector3dVector(points)
-    voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(point_cloud, voxel_size=voxel_size)
-    o3d.visualization.draw_geometries([voxel_grid])
+    # point_cloud = o3d.geometry.PointCloud()
+    # point_cloud.points = o3d.utility.Vector3dVector(points)
+    # voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(point_cloud, voxel_size=voxel_size)
+    # o3d.visualization.draw_geometries([voxel_grid])
+    visualize_points(points)
 
 
 def load_mesh_object(file_path, compute_vertex=False, visualize=False):
@@ -321,6 +322,27 @@ def test_mps_device():
         time_avg.append(t1 - t0)
     print('Time {} average: {}, std: {}'.format(device, np.mean(time_avg), np.std(time_avg)))
 
+def calculate_psnr(original, compressed):
+    mse = np.mean((original - compressed) ** 2)
+    if(mse == 0):  # MSE is zero means no noise is present in the signal .
+                  # Therefore PSNR have no importance.
+        return 100
+    max_pixel = 1.0
+    psnr = 20 * np.log10(max_pixel / np.sqrt(mse))
+    return psnr
+
+def calculate_iou(original, decompressed):
+    intersection = np.logical_and(original, decompressed).sum()
+    union = np.logical_or(original, decompressed).sum()
+    iou = intersection / union
+    return iou
+
+def calculate_accuracy(original, decompressed):
+    correct_voxels = np.sum(original == decompressed)
+    total_voxels = original.size
+    accuracy = correct_voxels / total_voxels
+    return accuracy
+
 def import_dataset(save_img=True):
     def rgb_to_grayscale(rgb_image, width=480):
         # Define the weights for each channel
@@ -379,7 +401,7 @@ def import_dataset(save_img=True):
             # Rescale point cloud
             voxel_min_bound = np.full(3, -1.0)
             voxel_max_bound = np.full(3, 1.0)
-            shape = np.full(3, 128, dtype=np.int32)
+            shape = np.full(3, 32, dtype=np.int32)
             points = rescale_points(points, pcd.get_min_bound(), pcd.get_max_bound(), voxel_min_bound, voxel_max_bound)
             visualize_points(points)
             voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / shape[0]
@@ -401,7 +423,28 @@ def import_dataset(save_img=True):
             print('size of voxels: {}'.format(sys.getsizeof(voxels)))
             print(octree.root_node)
 
+def obj_to_ply(path=None):
+    path = os.path.expanduser('~/open3d_data/extract/ShapeNet/02691156/f8fa93d7b17fe6126bded4fd00661977/models/model_normalized.obj')
+    mesh = o3d.io.read_triangle_mesh(path)
+    pcd = mesh.sample_points_uniformly(number_of_points=20000)
+    print('points: {}'.format(pcd.points))
+    points = np.asarray(pcd.points, dtype=np.float32)
+    new_pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
+
+    # print('points.dtype: {}'.format(points.dtype))
+    print('new pcd: {}'.format(new_pcd))
+    o3d.visualization.draw_geometries([new_pcd])
+    new_path = os.path.expanduser('~/open3d_data/extract/test_io.ply')
+    # o3d.io.write_triangle_mesh(new_path, mesh, write_vertex_colors=False, write_vertex_normals=False,
+    #                            write_triangle_uvs=False, compressed=True)
+    o3d.io.write_point_cloud(new_path, new_pcd)
+
 
 if __name__ == '__main__':
-    import_dataset(save_img=False)
-
+    # import_dataset(save_img=False)
+    # obj_to_ply()
+    x = np.asarray([[0, 1, 0, 1],
+                    [0, 0, 0, 0]])
+    y = np.asarray([[0, 1, 0, 0],
+                    [0, 0, 0, 0]])
+    print(calculate_iou(x, y))

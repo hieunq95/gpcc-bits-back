@@ -20,8 +20,14 @@ class ShapeNetDataset(Dataset):
         self.return_voxel = return_voxel
         self.n_points_per_cloud = n_points_per_cloud
         self.voxel_size = (self.crop_max_bound[0] - self.crop_min_bound[0]) / self.resolution[0]
-        self.shape_classes = ['02691156', '02958343', '03001627', '03636649', '04256520',
-                              '04379243', '04530566', '04090263', '02924116', '03467517']
+        # self.shape_classes = ['02691156', '02958343', '03001627', '03636649', '04256520',
+        #                       '04379243', '04530566', '04090263', '02924116', '03467517']
+        self.shape_classes = ['04379243',  # table 8443
+                              '02958343',  # car 7497
+                              '03001627',  # chair 6778
+                              '02691156',  # airplane 4045
+                              '04256520',  # sofa 3173
+                              ]
 
         if save_train_test_sets:
             # save train test datasets
@@ -29,9 +35,9 @@ class ShapeNetDataset(Dataset):
                                           num_meshes_per_class=n_mesh_per_class, num_points_per_cloud=n_points_per_cloud)
         # load dataset with a fixed slice_window across the shape classes. This is to ensure the equal number of shapes
         if self.mode == 'train':
-            slice_window = 600
+            slice_window = int(0.79 * n_mesh_per_class)
         else:
-            slice_window = 150
+            slice_window = int(0.19 * n_mesh_per_class)
         self.dataset = self.load_dataset(slice_window=slice_window)
         print('dataset shape: {}'.format(self.dataset.shape))
 
@@ -191,7 +197,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Create new datasets from mesh objects")
     parser.add_argument('--make', type=int, default=0,
                         help='Create a new dataset from mesh objects: [0, 1]')
-    parser.add_argument('--mpc', type=int, default=1000,
+    parser.add_argument('--mpc', type=int, default=2000,
                         help='Number of meshes per class')
     args = parser.parse_args()
 
@@ -209,7 +215,7 @@ if __name__ == '__main__':
                                     crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound,
                                     n_points_per_cloud=20000, n_mesh_per_class=args.mpc, return_voxel=True)
 
-    points_dataset = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', save_train_test_sets=False,
+    points_dataset = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', save_train_test_sets=new_datasets,
                                      mode='test', resolution=resolution,
                                      crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound,
                                      n_points_per_cloud=20000, n_mesh_per_class=args.mpc, return_voxel=False)
@@ -228,6 +234,10 @@ if __name__ == '__main__':
     for idx, x in enumerate(points_data_loader):
         points = x[0]
         visualize_points(points)
+        voxel = get_sparse_voxels(points, voxel_size=voxel_size, point_weight=1.0,
+                                  voxel_min_bound=voxel_min_bound, voxel_max_bound=voxel_max_bound)
+        print('Num voxels: {}'.format(torch.sum(voxel)))
+        visualize_voxels(voxel, voxel_size=voxel_size*20)
         if idx == 3:
             break
 
