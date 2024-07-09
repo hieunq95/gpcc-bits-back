@@ -5,12 +5,14 @@ import sys
 import time
 import scipy
 import mat73
+import subprocess
 import re
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import numpy as np
 import open3d as o3d
 import torch
+from plyfile import PlyData, PlyElement
 
 
 def custom_draw_geometry_with_rotation(pcd, interactive=True, include_coordinate=True):
@@ -69,6 +71,26 @@ def load_mesh_object(file_path, compute_vertex=False, visualize=False):
 
     return mesh
 
+def save_test_files_ply(file_path, destination='~/', n_points_per_cloud=20000):
+    file_path = os.path.expanduser(file_path)
+    destination = os.path.expanduser(destination)
+    if not os.path.isfile(file_path):
+        raise Exception('File not found')
+    if not os.path.isdir(destination):
+        os.mkdir(destination)
+    _, pcd = sample_points_from_mesh(file_path, num_points=n_points_per_cloud)
+    points_np = np.asarray(pcd.points, dtype=np.float32)
+    vertex = np.array([(point[0], point[1], point[2]) for point in points_np],
+                      dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4')])
+    el = PlyElement.describe(vertex, 'vertex')
+
+    # Save file
+    file_id = re.split('/', file_path)
+    dest_fname = file_id[6] + '_' + file_id[7] + '.ply'
+    dest_fname = destination + dest_fname
+    # print('Save PLY file to: {}'.format(dest_fname))
+    # Write to a PLY file
+    PlyData([el]).write(dest_fname)
 
 def sample_points_from_mesh(file_path, num_points=5000, min_bound=(-1.0, -1.0, -1.0), max_bound=(1.0, 1.0, 1.0),
                             visualize=False, print_log=False):
@@ -189,59 +211,6 @@ def points_remover(points, voxel_min_bound, voxel_max_bound):
             points[i][:] = 0
     return points
 
-def zero_padding(points_3d, axis, val, patch_size):
-    """
-    Make a sparse representation of point cloud with zero-padding
-    :param points_3d: Input point cloud `(N,3)`
-    :param axis: Axis we want to divide the 3D space into patches
-    :param val: Value to start the patch
-    :param patch_size: Size of the patch along the `axis`
-    :return: Sparse point cloud `(N,3)`, and number of non-zero coefficients `non_zero_points`
-    """
-    sparse_points = np.copy(points_3d)
-    non_zero_points = 0
-    for n in range(sparse_points.shape[0]):
-        if not val <= sparse_points[n, axis] <= val + patch_size:
-            sparse_points[n, :] = 0.0
-        else:
-            non_zero_points += 1
-
-    return sparse_points, non_zero_points
-
-
-def get_zero_padding_patches(points_3d, axis, patch_size):
-    """
-    Return a set of patches zero padded `[num_patches, N, 3]'
-    :param points_3d: 3D point cloud
-    :param axis: Axis we want to divide the 3D space into patches
-    :param patch_size: Size of the patch along the `axis`
-    :return: A set of patches zero padded `[num_patches, N, 3]'
-    """
-    sparse_points = np.copy(points_3d)
-    min_bound = np.min(sparse_points, axis=0)
-    max_bound = np.max(sparse_points, axis=0)
-    points_range = max_bound - min_bound
-    n_iters = int(points_range[axis] / patch_size) + 1
-
-    sparse_points_batch = []
-
-    for i in range(n_iters):
-        val_i = min_bound[axis] + i * patch_size
-        sparse_points_i, _ = zero_padding(sparse_points, axis=axis, val=val_i, patch_size=patch_size)
-        # print('val_i: {}'.format(val_i))
-        # print('sparse_points_i: {}'.format(sparse_points_i))
-        sparse_points_batch.append(sparse_points_i)
-
-    sparse_points_batch = np.asarray(sparse_points_batch)
-
-    # print('min_bound: {}, max_bound: {}'.format(min_bound, max_bound))
-    # print('patch_size: {}'.format(patch_size))
-    # print('n_inters: {}'.format(n_iters))
-    # print('sparse_points_batch: {}'.format(sparse_points_batch.shape))
-
-    return sparse_points_batch
-
-
 def calculate_batch_entropy(x, base=2):
     """
     Calculate entropy `H_b(x)` of a batch data `[batch_size, num_features]`. For better accuracy of entropy,
@@ -322,15 +291,6 @@ def test_mps_device():
         time_avg.append(t1 - t0)
     print('Time {} average: {}, std: {}'.format(device, np.mean(time_avg), np.std(time_avg)))
 
-def calculate_psnr(original, compressed):
-    mse = np.mean((original - compressed) ** 2)
-    if(mse == 0):  # MSE is zero means no noise is present in the signal .
-                  # Therefore PSNR have no importance.
-        return 100
-    max_pixel = 1.0
-    psnr = 20 * np.log10(max_pixel / np.sqrt(mse))
-    return psnr
-
 def calculate_iou(original, decompressed):
     intersection = np.logical_and(original, decompressed).sum()
     union = np.logical_or(original, decompressed).sum()
@@ -342,6 +302,69 @@ def calculate_accuracy(original, decompressed):
     total_voxels = original.size
     accuracy = correct_voxels / total_voxels
     return accuracy
+
+def draco_compress(npy_file, out_dir, quantization=6):
+    def compress_ply(input_ply, output_drc, quantization=quantization):
+        result = subprocess.run(
+            ['./draco/draco_encoder', '-i', input_ply, '-o', output_drc, '-qp', str(quantization)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        output = result.stdout + result.stderr
+        encoded_size = None
+        for line in output.split('\n'):
+            if "Encoded size" in line:
+                encoded_size = int(line.split('=')[1].strip().split()[0])
+                break
+        return encoded_size
+
+    out_dir = os.path.expanduser(out_dir)
+    if not os.path.isdir(out_dir):
+        os.mkdir(out_dir)
+    point_clouds = np.load(npy_file)
+    batch_size = point_clouds.shape[0]
+    encoded_sizes = []
+    print('Compress {} point clouds with Draco'.format(batch_size))
+    for i in range(batch_size):
+        points = point_clouds[i]
+        input_ply = out_dir + 'temp_{}.ply'.format(i)
+
+        if not os.path.isdir(out_dir + 'Compress/'):
+            os.mkdir(out_dir + 'Compress/')
+        output_drc = out_dir + 'Compress/' + '{}.drc'.format(i)
+
+        vertex = np.array([(point[0], point[1], point[2]) for point in points],
+                          dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4')])
+        el = PlyElement.describe(vertex, 'vertex')
+        # Write to a PLY file
+        PlyData([el]).write(input_ply)
+        encoded_size = compress_ply(input_ply, output_drc, quantization)
+        encoded_sizes.append(encoded_size)
+        os.remove(input_ply)
+
+    return encoded_sizes, point_clouds
+
+def draco_decompress(input_folder, output_folder):
+    def decompress_drc(input_drc, output_ply):
+        subprocess.run(
+            ['./draco/draco_decoder', '-i', input_drc, '-o', output_ply],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+    input_folder = os.path.expanduser(input_folder)
+    output_folder = os.path.expanduser(output_folder)
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    for file_name in os.listdir(input_folder):
+        print('Decompress {} with Draco'.format(file_name))
+        if file_name.endswith('.drc'):
+            input_drc = os.path.join(input_folder, file_name)
+            output_ply = os.path.join(output_folder, file_name.replace('.drc', '.ply'))
+            decompress_drc(input_drc, output_ply)
+
 
 def import_dataset(save_img=True):
     def rgb_to_grayscale(rgb_image, width=480):
@@ -423,28 +446,55 @@ def import_dataset(save_img=True):
             print('size of voxels: {}'.format(sys.getsizeof(voxels)))
             print(octree.root_node)
 
-def obj_to_ply(path=None):
-    path = os.path.expanduser('~/open3d_data/extract/ShapeNet/02691156/f8fa93d7b17fe6126bded4fd00661977/models/model_normalized.obj')
-    mesh = o3d.io.read_triangle_mesh(path)
-    pcd = mesh.sample_points_uniformly(number_of_points=20000)
-    print('points: {}'.format(pcd.points))
-    points = np.asarray(pcd.points, dtype=np.float32)
-    new_pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(points))
+def convert_ply_float64_to_float32(input_filename, output_filename):
+    # Read the PLY file
+    ply_data = PlyData.read(input_filename)
 
-    # print('points.dtype: {}'.format(points.dtype))
-    print('new pcd: {}'.format(new_pcd))
-    o3d.visualization.draw_geometries([new_pcd])
-    new_path = os.path.expanduser('~/open3d_data/extract/test_io.ply')
-    # o3d.io.write_triangle_mesh(new_path, mesh, write_vertex_colors=False, write_vertex_normals=False,
-    #                            write_triangle_uvs=False, compressed=True)
-    o3d.io.write_point_cloud(new_path, new_pcd)
+    # Extract the vertex data
+    vertex_data = ply_data['vertex'].data
+
+    # Convert float64 fields to float32
+    converted_vertex_data = np.array([
+        (np.float32(vertex['x']), np.float32(vertex['y']), np.float32(vertex['z']))
+        for vertex in vertex_data
+    ], dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4')])
+
+    # Create a new PlyElement
+    new_vertex_element = PlyElement.describe(converted_vertex_data, 'vertex')
+
+    # Create a new PlyData instance
+    new_ply_data = PlyData([new_vertex_element], text=ply_data.text)
+
+    # Write the new PLY file
+    new_ply_data.write(output_filename)
 
 
 if __name__ == '__main__':
-    # import_dataset(save_img=False)
-    # obj_to_ply()
-    x = np.asarray([[0, 1, 0, 1],
-                    [0, 0, 0, 0]])
-    y = np.asarray([[0, 1, 0, 0],
-                    [0, 0, 0, 0]])
-    print(calculate_iou(x, y))
+    test_npy = os.path.expanduser('~/open3d_data/extract/processed_shapenet/shapenet_test_02958343.npy')
+    draco_out_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Draco_results/')
+    draco_decode_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Draco_results/Decompress/')
+    compress_sizes, point_clouds = draco_compress(test_npy, draco_out_dir, 6)
+    print('Compressed size: {} bytes'.format(np.sum(compress_sizes)))
+    draco_decompress(draco_out_dir + 'Compress/', draco_decode_dir)
+
+    # Check quality
+    resolution = np.full(3, 64, dtype=np.int32)
+    voxel_min_bound = np.full(3, -1.0)
+    voxel_max_bound = np.full(3, 1.0)
+    voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
+
+    pc_idx = 0
+    points = point_clouds[pc_idx]
+    ori_voxel = get_sparse_voxels(points, voxel_size, 1.0, voxel_min_bound, voxel_max_bound)
+    visualize_voxels(ori_voxel, voxel_size=voxel_size*40)
+
+    pcd = o3d.io.read_point_cloud(draco_decode_dir + '{}.ply'.format(pc_idx))
+    decoded_points = np.asarray(pcd.points)
+    decoded_voxel = get_sparse_voxels(decoded_points, voxel_size, 1.0, voxel_min_bound, voxel_max_bound)
+    visualize_voxels(decoded_voxel, voxel_size=voxel_size*40)
+
+    print('Ori_voxel: {}, Decoded_voxel: {}'.format(ori_voxel.shape, decoded_voxel.shape))
+    print('IoU: {}'.format(calculate_iou(ori_voxel, decoded_voxel)))
+
+
+

@@ -11,17 +11,23 @@ class ConvoVAE(nn.Module):
         self.out_dim = out_dim
         self.h_dim = h_dim
         self.latent_dim = latent_dim
+        # downsampling strategies: 128 -> 8/2(61), 4/3(20), 4/3+1(7), 3/2(3) -> 3  (4 layers)
+        # upsampling               3 -> 3/2(7), 4/3+1(20), 8/2(61), 8/2(128) -> 128
+        #                          64 -> 9/3+1(20), 5/3(6), 2/2(2) -> 3 (3 layers)
+
         self.conv_encode = nn.Sequential(
-            nn.Conv3d(in_channels=1, out_channels=8, kernel_size=8, stride=4),
+            nn.Conv3d(in_channels=1, out_channels=8, kernel_size=9, stride=3, padding=1),
             nn.ReLU(),
-            nn.Conv3d(in_channels=8, out_channels=16, kernel_size=3, stride=2),
+            nn.Conv3d(in_channels=8, out_channels=16, kernel_size=5, stride=3, padding=0),
             nn.ReLU(),
-            nn.Conv3d(in_channels=16, out_channels=32, kernel_size=3, stride=3),
-            nn.ReLU()
+            nn.Conv3d(in_channels=16, out_channels=32, kernel_size=2, stride=2, padding=0),
+            nn.ReLU(),
+            # nn.Conv3d(in_channels=32, out_channels=32, kernel_size=3, stride=2, padding=0),
+            # nn.ReLU(),
         )
 
         # fully-connected layers
-        self.new_dim = 5
+        self.new_dim = 3
         self.flat_dim = 32 * self.new_dim**3
         self.fc1 = nn.Linear(self.flat_dim, self.h_dim)
         self.fc21 = nn.Linear(self.h_dim, self.latent_dim)
@@ -30,11 +36,13 @@ class ConvoVAE(nn.Module):
         self.fc4 = nn.Linear(self.h_dim, self.flat_dim)
 
         self.conv_decode = nn.Sequential(
-            nn.ConvTranspose3d(in_channels=32, out_channels=16, kernel_size=3, stride=3),
+            # nn.ConvTranspose3d(in_channels=32, out_channels=32, kernel_size=3, stride=2, padding=0),
+            # nn.ReLU(),
+            nn.ConvTranspose3d(in_channels=32, out_channels=16, kernel_size=2, stride=2, padding=0),
             nn.ReLU(),
-            nn.ConvTranspose3d(in_channels=16, out_channels=8, kernel_size=3, stride=2),
+            nn.ConvTranspose3d(in_channels=16, out_channels=8, kernel_size=5, stride=3, padding=0),
             nn.ReLU(),
-            nn.ConvTranspose3d(in_channels=8, out_channels=1, kernel_size=8, stride=4),
+            nn.ConvTranspose3d(in_channels=8, out_channels=1, kernel_size=9, stride=3, padding=1),
             nn.Sigmoid()
         )
 
@@ -76,11 +84,9 @@ class ConvoVAE(nn.Module):
         mu, log_var = self.encode(x)
         z = self.reparameterize(mu, log_var)
         x_probs = self.decode(z)
-        # dist = Bernoulli(x_probs.view(-1, self.in_dim[0] * self.in_dim[1] * self.in_dim[2]))
-        # l = torch.sum(dist.log_prob(x.view(-1, self.in_dim[0] * self.in_dim[1] * self.in_dim[2])), dim=1)
-        # weighted binary cross entropy for reconstruction loss
-        l = -F.binary_cross_entropy_with_logits(x_probs, x, reduction='sum',
-                                                pos_weight=torch.full(self.in_dim.tolist(), 0.97))
+        flat_dim = self.in_dim[0] * self.in_dim[1] * self.in_dim[2]
+        dist = Bernoulli(x_probs.view(-1, flat_dim))
+        l = torch.sum(dist.log_prob(x.view(-1, flat_dim)), dim=1)
         p_z = torch.sum(Normal(0, 1).log_prob(z), dim=1)
         q_z = torch.sum(Normal(mu, log_var).log_prob(z), dim=1)
-        return -torch.mean(l + p_z - q_z) * 1.4425 / (self.in_dim[0] * self.in_dim[1] * self.in_dim[2])
+        return -torch.mean(l + p_z - q_z) * 1.4425 / flat_dim
