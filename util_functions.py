@@ -303,7 +303,7 @@ def calculate_accuracy(original, decompressed):
     accuracy = correct_voxels / total_voxels
     return accuracy
 
-def draco_compress(npy_file, out_dir, quantization=6):
+def draco_compress(data, out_dir, quantization=6):
     def compress_ply(input_ply, output_drc, quantization=quantization):
         result = subprocess.run(
             ['./draco/draco_encoder', '-i', input_ply, '-o', output_drc, '-qp', str(quantization)],
@@ -322,10 +322,11 @@ def draco_compress(npy_file, out_dir, quantization=6):
     out_dir = os.path.expanduser(out_dir)
     if not os.path.isdir(out_dir):
         os.mkdir(out_dir)
-    point_clouds = np.load(npy_file)
+    point_clouds = data.detach().numpy()
     batch_size = point_clouds.shape[0]
     encoded_sizes = []
-    print('Compress {} point clouds with Draco'.format(batch_size))
+    encoded_fnames = []
+    # print('Compress {} point clouds with Draco'.format(batch_size))
     for i in range(batch_size):
         points = point_clouds[i]
         input_ply = out_dir + 'temp_{}.ply'.format(i)
@@ -341,11 +342,12 @@ def draco_compress(npy_file, out_dir, quantization=6):
         PlyData([el]).write(input_ply)
         encoded_size = compress_ply(input_ply, output_drc, quantization)
         encoded_sizes.append(encoded_size)
+        encoded_fnames.append(output_drc)
         os.remove(input_ply)
 
-    return encoded_sizes, point_clouds
+    return encoded_sizes, encoded_fnames, point_clouds
 
-def draco_decompress(input_folder, output_folder):
+def draco_decompress(input_file_names, output_folder):
     def decompress_drc(input_drc, output_ply):
         subprocess.run(
             ['./draco/draco_decoder', '-i', input_drc, '-o', output_ply],
@@ -353,17 +355,23 @@ def draco_decompress(input_folder, output_folder):
             stderr=subprocess.PIPE,
             text=True
         )
-    input_folder = os.path.expanduser(input_folder)
+
     output_folder = os.path.expanduser(output_folder)
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
-    for file_name in os.listdir(input_folder):
-        print('Decompress {} with Draco'.format(file_name))
+    decompressed_ply_files = []
+
+    for file_name in input_file_names:
+        # print('Decompress {} with Draco'.format(file_name))
         if file_name.endswith('.drc'):
-            input_drc = os.path.join(input_folder, file_name)
-            output_ply = os.path.join(output_folder, file_name.replace('.drc', '.ply'))
-            decompress_drc(input_drc, output_ply)
+            output_fname = file_name.replace('.drc', '.ply')
+            output_fname = output_fname.replace('Compress', 'Decompress')
+            output_ply = os.path.join(output_folder, output_fname.replace('.drc', '.ply'))
+            decompressed_ply_files.append(output_ply)
+            decompress_drc(file_name, output_ply)
+
+    return decompressed_ply_files
 
 
 def import_dataset(save_img=True):
@@ -467,34 +475,6 @@ def convert_ply_float64_to_float32(input_filename, output_filename):
 
     # Write the new PLY file
     new_ply_data.write(output_filename)
-
-
-if __name__ == '__main__':
-    test_npy = os.path.expanduser('~/open3d_data/extract/processed_shapenet/shapenet_test_02958343.npy')
-    draco_out_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Draco_results/')
-    draco_decode_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Draco_results/Decompress/')
-    compress_sizes, point_clouds = draco_compress(test_npy, draco_out_dir, 6)
-    print('Compressed size: {} bytes'.format(np.sum(compress_sizes)))
-    draco_decompress(draco_out_dir + 'Compress/', draco_decode_dir)
-
-    # Check quality
-    resolution = np.full(3, 64, dtype=np.int32)
-    voxel_min_bound = np.full(3, -1.0)
-    voxel_max_bound = np.full(3, 1.0)
-    voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
-
-    pc_idx = 0
-    points = point_clouds[pc_idx]
-    ori_voxel = get_sparse_voxels(points, voxel_size, 1.0, voxel_min_bound, voxel_max_bound)
-    visualize_voxels(ori_voxel, voxel_size=voxel_size*40)
-
-    pcd = o3d.io.read_point_cloud(draco_decode_dir + '{}.ply'.format(pc_idx))
-    decoded_points = np.asarray(pcd.points)
-    decoded_voxel = get_sparse_voxels(decoded_points, voxel_size, 1.0, voxel_min_bound, voxel_max_bound)
-    visualize_voxels(decoded_voxel, voxel_size=voxel_size*40)
-
-    print('Ori_voxel: {}, Decoded_voxel: {}'.format(ori_voxel.shape, decoded_voxel.shape))
-    print('IoU: {}'.format(calculate_iou(ori_voxel, decoded_voxel)))
 
 
 

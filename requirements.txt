@@ -4,4 +4,4 @@ torchvision==0.14.1
 numpy
 matplotlib
 open3d==0.18.0
-
+plyfile
