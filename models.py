@@ -15,12 +15,12 @@ class ConvoVAE(nn.Module):
             raise AttributeError('Unsupported resolution')
 
         # down-sampling strategies:
-        # resolution = 128:  128 -> 9/3+2(42), 5/3+1(14), 2/2(7) -> 7 (3 layers)
+        # resolution = 128:  128 -> 9/3+2(42), 5/3+1(14), 5/3(4) -> 4 (3 layers)
         # resolution = 64:   64 -> 9/3+1(20), 5/3(6), 2/2(3) -> 3 (3 layers)
         # resolution = 32:   32 -> 9/3+2(10), 5/3+2(4), 2/2+1(3) -> 3 (3 layers)
         if self.in_dim[0] == 128:
-            ksp = [[9, 3, 2], [5, 3, 1], [2, 2, 0]]  # [kernel_size, stride, padding] per layer
-            new_dim = 7  # new dimensional size after convo layers
+            ksp = [[9, 3, 2], [5, 3, 1], [5, 3, 0]]  # [kernel_size, stride, padding] per layer
+            new_dim = 4  # new dimensional size after convo layers
         elif self.in_dim[0] == 64:
             ksp = [[9, 3, 1], [5, 3, 0], [2, 2, 0]]
             new_dim = 3

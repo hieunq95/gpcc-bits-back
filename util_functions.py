@@ -4,15 +4,42 @@ import os
 import sys
 import time
 import scipy
+import lzma
+import dill
+import gc
 import mat73
 import subprocess
 import re
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
 import numpy as np
+import craystack as cs
 import open3d as o3d
 import torch
 from plyfile import PlyData, PlyElement
+from autograd.builtins import tuple as ag_tuple
+from craystack import bb_ans
+
+class ArraySymbol:
+    def __init__(self, arr: np.ndarray):
+        self.arr = arr
+
+    def __lt__(self, other: np.ndarray):
+        return self.arr.tobytes() < other.arr.tobytes()
+
+    def __gt__(self, other: np.ndarray):
+        return self.arr.tobytes() > other.arr.tobytes()
+
+    def __eq__(self, other):
+        return (self.arr == other.arr).all()
+
+def ArrayCodec(codec):
+    def push(message, x):
+        return codec.push(message, x.arr)
+
+    def pop(message):
+        message, x = codec.pop(message)
+        return message, ArraySymbol(x)
+
+    return cs.Codec(push, pop)
 
 
 def custom_draw_geometry_with_rotation(pcd, interactive=True, include_coordinate=True):
@@ -169,14 +196,16 @@ def get_sparse_voxels_batch(points_batch, voxel_size, point_weight=1.0, voxel_mi
     :param voxel_max_bound: Max bound of the sparse voxels. Shape `(height_max, width_max, length_max)`
     :return: A batch of sparse voxels `[num_batches, heigh, width, length]`
     """
-    grid_voxels_batches = []
-    for points_i in points_batch:
+    resolution = int((voxel_max_bound[0] - voxel_min_bound[0]) / voxel_size)
+    batch_size = points_batch.size()[0]
+    grid_voxels_batches = torch.zeros((batch_size, resolution, resolution, resolution))
+    for i, points_i in enumerate(points_batch):
         grid_patches_i = get_sparse_voxels(points_i, voxel_size=voxel_size, point_weight=point_weight,
                                            voxel_min_bound=voxel_min_bound, voxel_max_bound=voxel_max_bound,
                                            visualize=False)
-        grid_voxels_batches.append(torch.unsqueeze(grid_patches_i, 0))
+        grid_voxels_batches[i] = grid_patches_i
 
-    return torch.cat(grid_voxels_batches, 0).float()
+    return grid_voxels_batches.float()
 
 
 def rescale_points(points, origin_min_bound, origin_max_bound, new_min_bound, new_max_bound):
@@ -303,19 +332,21 @@ def calculate_accuracy(original, decompressed):
     accuracy = correct_voxels / total_voxels
     return accuracy
 
-def draco_compress(data, out_dir, quantization=6):
-    def compress_ply(input_ply, output_drc, quantization=quantization):
+def draco_compress(data, out_dir, quantization):
+    def compress_ply(input_ply, output_drc, quantz):
         result = subprocess.run(
-            ['./draco/draco_encoder', '-i', input_ply, '-o', output_drc, '-qp', str(quantization)],
+            ['./draco/draco_encoder', '-i', input_ply, '-o', output_drc, '-qp', '{}'.format(quantz), '-cl', '7'],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True
         )
         output = result.stdout + result.stderr
+        # print('output: {}'.format(output))
         encoded_size = None
         for line in output.split('\n'):
             if "Encoded size" in line:
                 encoded_size = int(line.split('=')[1].strip().split()[0])
+                # print('output ++: encoded_size bytes {}'.format(encoded_size))
                 break
         return encoded_size
 
@@ -329,6 +360,7 @@ def draco_compress(data, out_dir, quantization=6):
     # print('Compress {} point clouds with Draco'.format(batch_size))
     for i in range(batch_size):
         points = point_clouds[i]
+        # print('points_i: {}'.format(points.shape))
         input_ply = out_dir + 'temp_{}.ply'.format(i)
 
         if not os.path.isdir(out_dir + 'Compress/'):
@@ -475,6 +507,194 @@ def convert_ply_float64_to_float32(input_filename, output_filename):
 
     # Write the new PLY file
     new_ply_data.write(output_filename)
+
+# Functions to compress dataset
+def draco_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_bound, quantz_level):
+    draco_results_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Draco_results/')
+    data = point_clouds
+    t0 = time.time()
+    compressed_sizes, compressed_fnames, raw_point_clouds = draco_compress(
+        data, draco_results_dir, quantz_level
+    )
+    t1 = time.time()
+    flat_message_len = np.sum(compressed_sizes) * 8  # maybe we also need to calculate overhead of Draco's decoder?
+    num_voxels = point_clouds.size()[0] * point_clouds.size()[1]
+    bpv_overhead = flat_message_len / num_voxels
+    print('--- Draco -- encoded in {} seconds, bpv: {}, bpv_overhead: {}'.format(
+        t1 - t0, bpv_overhead, bpv_overhead)
+    )
+    # Decode
+    draco_decode_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Draco_results/Decompress/')
+    t0 = time.time()
+    decompressed_file_names = draco_decompress(compressed_fnames, draco_decode_dir)
+    t1 = time.time()
+    # Check compression quality
+    iou_arr = []
+    for i in range(len(decompressed_file_names)):
+        pcd = o3d.io.read_point_cloud(decompressed_file_names[i])
+        decoded_points = np.asarray(pcd.points)
+        decoded_points = rescale_points(
+            decoded_points, pcd.get_min_bound(), pcd.get_max_bound(), voxel_min_bound, voxel_max_bound
+        )
+        decoded_voxel = get_sparse_voxels(decoded_points, voxel_size, 1.0, voxel_min_bound, voxel_max_bound)
+        original_voxel = get_sparse_voxels(data[i], voxel_size, 1.0, voxel_min_bound, voxel_max_bound)
+        iou_i = calculate_iou(original_voxel, decoded_voxel)
+        iou_arr.append(iou_i)
+    print('--- Draco -- decoded in {} seconds, average IoU: {}, std IoU: {}'.format(
+        t1 - t0, np.mean(iou_arr), np.std(iou_arr))
+    )
+    return bpv_overhead
+
+def bernoulli_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_bound,
+                  model, obs_precision, subset_size=1):
+    data_shape = voxel_batch.size()
+    num_data = data_shape[0]
+    # num_voxels = torch.sum(voxel_batch)
+    num_voxels = point_clouds.size()[0] * point_clouds.size()[1]
+    obs_shape = (subset_size, data_shape[1], data_shape[2], data_shape[3], data_shape[4])
+    obs_size = np.prod(obs_shape)
+    latent_size = np.prod((subset_size, model.latent_dim))
+    codec = lambda p: cs.Bernoulli(p, obs_precision)
+
+    # Encode data using small batches (preventing forward big batch of data -> crash)
+    init_message = cs.base_message(obs_size)
+    assert num_data % subset_size == 0
+    pop_array = []
+    message = init_message
+    t0 = time.time()
+    data_tuple = torch.split(voxel_batch, subset_size)
+    point_tuple = torch.split(point_clouds, subset_size)
+
+    for x in data_tuple:  # small batches
+        p = model(x).detach().numpy().flatten()
+        push, pop = codec(p)
+        pop_array.append(pop)
+        message, = push(message, np.asarray(x.detach().numpy().flatten(), dtype=np.uint8))
+    t1 = time.time()
+    flat_message = cs.flatten(message)
+    codec_compressor = lzma.LZMACompressor()
+    pop_size = 0
+    for pf in pop_array:
+        serialized_pop = dill.dumps(pf)
+        pfc = codec_compressor.compress(serialized_pop)
+        pop_size += len(pfc) * 8
+    codec_compressor.flush()
+    pop_size = min(pop_size, 4 * 10**6 * 8)   # compare size of the Codec with size of the deep learning model
+    flat_message_len = 32 * len(flat_message)
+    bpv_overhead = (pop_size + flat_message_len) / num_voxels
+    bpv = flat_message_len / num_voxels
+    print('--- NoBB_VAE -- encoded in {} seconds, bpv: {}, bpv_overhead: {}'.format(
+        t1 - t0, bpv, bpv_overhead)
+    )
+    save_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Bernoulli_results/')
+    if not os.path.isdir(save_dir):
+        os.mkdir(save_dir)
+    np.save(
+        os.path.expanduser(save_dir + 'Bernoulli_shapenet_{}.npy'.format(num_data)),
+        flat_message
+    )
+
+    # Decode message
+    t0 = time.time()
+    message_ = cs.unflatten(flat_message, obs_size)
+    data_decoded = []
+    for i in range(len(pop_array)):
+        pop = pop_array[-1 - i]  # reverse order
+        message_, data_ = pop(message_, )
+        data_decoded.append(np.asarray(data_, dtype=np.uint8))  # cast dtype to prevent out of memory issue
+    t1 = time.time()
+
+    data_decoded = reversed(data_decoded)
+    # Check quality
+    iou_arr = []
+    for x, x_, pb in zip(data_tuple, data_decoded, point_tuple):
+        np.testing.assert_equal(x.detach().numpy().flatten(), x_)
+        decoded_voxel = np.reshape(np.squeeze(x_), data_shape[2:])
+        original_voxel = get_sparse_voxels(
+            torch.squeeze(pb), voxel_size, 1.0, voxel_min_bound, voxel_max_bound
+        ).detach().numpy()
+        iou_i = calculate_iou(original_voxel, decoded_voxel)
+        iou_arr.append(iou_i)
+    print('--- NoBB_VAE -- decoded in {} seconds, average IoU: {}, std IoU: {}'.format(
+        t1 - t0, np.mean(iou_arr), np.std(iou_arr))
+    )
+    return bpv_overhead, bpv
+
+def bits_back_vae_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_bound,
+                      gen_net, rec_net, obs_codec, obs_precision, subset_size=1):
+    def vae_view(head):
+        return ag_tuple((np.reshape(head[:latent_size], latent_shape),
+                         np.reshape(head[latent_size:], obs_shape)))
+
+    data_shape = voxel_batch.size()
+    num_data = data_shape[0]
+    # num_voxels = torch.sum(voxel_batch)
+    num_voxels = point_clouds.size()[0] * point_clouds.size()[1]
+    assert num_data % subset_size == 0
+    num_subsets = num_data // subset_size
+    latent_dim = 50
+    latent_shape = (subset_size, latent_dim)  # [1, 50]
+    latent_size = np.prod(latent_shape)
+    obs_shape = (subset_size, data_shape[1], data_shape[2], data_shape[3], data_shape[4])  # [1, 1, 128, 128, 128]
+    obs_size = np.prod(obs_shape)
+
+    data = np.split(np.asarray(voxel_batch.detach().numpy(), dtype=np.uint8), num_subsets)
+    # Create codec
+    vae_append, vae_pop = cs.repeat(cs.substack(
+        bb_ans.VAE(gen_net, rec_net, obs_codec, 8, obs_precision),
+        vae_view), num_subsets)
+    # Encode
+    t0 = time.time()
+    init_message = cs.base_message(obs_size + latent_size)
+    message, = vae_append(init_message, data)
+    flat_message = cs.flatten(message)
+    flat_message_len = 32 * len(flat_message)
+    # free up some memory
+    del message, voxel_batch
+    gc.collect()
+    t1 = time.time()
+    # Compress the Codec itself (should be useful for communication of the model and codec)
+    codec_compressor = lzma.LZMACompressor()
+    compressed_pop = codec_compressor.compress(dill.dumps(vae_pop))
+    codec_compressor.flush()
+    # Calculate bit rate and save compressed data
+    pop_size = len(compressed_pop) * 8
+    bpv_overhead = (pop_size + flat_message_len) / num_voxels
+    print('--- BB_VAE -- encoded in {} seconds, bpv: {}, bpv_overhead: {}'.format(
+        t1 - t0, flat_message_len / num_voxels, bpv_overhead)
+    )
+    save_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/BB_VAE_results/')
+    if not os.path.isdir(save_dir):
+        os.mkdir(save_dir)
+    np.save(
+        os.path.expanduser(save_dir + 'BB_VAE_shapenet_{}.npy'.format(num_data)),
+        flat_message
+    )
+
+    # Decode
+    t0 = time.time()
+    message = cs.unflatten(flat_message, obs_size + latent_size)
+    # free up some memory
+    del flat_message, codec_compressor
+    gc.collect()
+    message, data_ = vae_pop(message)
+    np.testing.assert_equal(data, data_)  # Check lossless compression
+    t1 = time.time()
+    # Check quality
+    iou_arr = []
+    for i in range(len(data_)):
+        decoded_voxel = np.squeeze(data_[i])
+        original_voxel = get_sparse_voxels(
+            torch.squeeze(point_clouds[i]), voxel_size, 1.0, voxel_min_bound, voxel_max_bound
+        )
+        original_voxel = original_voxel.detach().numpy()
+        iou_i = calculate_iou(original_voxel, decoded_voxel)
+        iou_arr.append(iou_i)
+    print('--- BB_VAE -- decoded in {} seconds, average IoU: {}, std IoU: {}'.format(
+        t1 - t0, np.mean(iou_arr), np.std(iou_arr))
+    )
+
+    return bpv_overhead, data_
 
 
 

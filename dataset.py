@@ -19,12 +19,13 @@ class ShapeNetDataset(Dataset):
         self.n_points_per_cloud = n_points_per_cloud
         self.voxel_size = (self.crop_max_bound[0] - self.crop_min_bound[0]) / self.resolution[0]
         # Shapenet classes    Name          Num        (https://arxiv.org/pdf/1512.03012)
-        self.shape_classes = ['04379243',  # table 8443
-                              '02958343',  # car 7497
-                              '03001627',  # chair 6778
-                              '02691156',  # airplane 4045
-                              '04256520',  # sofa 3173
-                              ]
+        self.shape_classes = [
+            '04379243',  # table 8443
+            '02958343',  # car 7497
+            '03001627',  # chair 6778
+            '02691156',  # airplane 4045
+            # '04256520',  # sofa 3173
+             ]
         self.split_train_ratio = 0.8
         if make_new_dataset:
             # save train test datasets
@@ -81,8 +82,6 @@ class ShapeNetDataset(Dataset):
         :return:
         """
         for shape_class in self.shape_classes:
-            test_stack = []
-            train_voxel_stack = []
             mesh_obj_paths = self.load_mesh_object_paths(shape_class, num_meshes_per_class)
             dataset_len = len(mesh_obj_paths)
             train_set_len = int(split_ratio * dataset_len)
@@ -92,18 +91,22 @@ class ShapeNetDataset(Dataset):
                 shape_class, len(train_paths), len(test_paths)))
 
             if self.mode == 'train':
-                for trp in train_paths:
+                train_voxel_stack = np.zeros(
+                    shape=(len(train_paths), resolution[0], resolution[1], resolution[2]),
+                    dtype=np.uint8
+                )
+                for i, trp in enumerate(train_paths):
                     points, _ = sample_points_from_mesh(trp, num_points=num_points_per_cloud,
                                                         min_bound=self.crop_min_bound, max_bound=self.crop_max_bound)
                     voxels = get_sparse_voxels(points, voxel_size=self.voxel_size, point_weight=1.0,
                                                voxel_min_bound=self.crop_min_bound, voxel_max_bound=self.crop_max_bound)
-                    train_voxel_stack.append(voxels)
-                train_voxel_stack = np.asarray(train_voxel_stack, dtype=np.uint8)
+                    train_voxel_stack[i] = voxels.detach().numpy()
                 save_train_voxel_path = dir_path + 'shapenet_train_{}.npy'.format(shape_class)
                 print('Save train set: {}'.format(save_train_voxel_path))
                 np.save(save_train_voxel_path, train_voxel_stack)
 
             if self.mode == 'test':
+                test_stack = []
                 for tep in test_paths:
                     points, _ = sample_points_from_mesh(tep, num_points=num_points_per_cloud,
                                                         min_bound=self.crop_min_bound, max_bound=self.crop_max_bound)
@@ -188,6 +191,8 @@ if __name__ == '__main__':
                         help='Resolution of voxels')
     parser.add_argument('--mode', type=str, default='test',
                         help='Train/test set indicator')
+    parser.add_argument('--batch', type=int, default=32,
+                        help='Batch size')
     args = parser.parse_args()
 
     resolution = np.full(3, args.res, dtype=np.int32)
@@ -217,16 +222,26 @@ if __name__ == '__main__':
                                       crop_max_bound=voxel_max_bound, n_points_per_cloud=20000,
                                       n_mesh_per_class=args.mpc)
 
-    data_loader = DataLoader(dataset, batch_size=2, shuffle=True, drop_last=True)
+    data_loader = DataLoader(dataset, batch_size=args.batch, shuffle=False, drop_last=True)
 
     # Visualize some point clouds with Open3D
     for idx, x in enumerate(data_loader):
-        data = x[0]
-        if args.mode == 'train':
-            visualize_voxels(data, voxel_size*40)
+        if args.mode == 'test':
+            x_batch = get_sparse_voxels_batch(x, voxel_size, 1.0, voxel_min_bound, voxel_max_bound)
         else:
-            visualize_points(data)
-            voxel = get_sparse_voxels(data, voxel_size=voxel_size, point_weight=1.0,
+            x_batch = x
+        x_batch = torch.squeeze(x_batch)
+        bit_depth = int(np.log2(resolution[0]))
+        print('bit_depth: {}'.format(bit_depth))
+        bpv_draco = draco_ans(
+            x, x_batch, voxel_size, voxel_min_bound, voxel_max_bound, bit_depth
+        )
+        print('Draco bpv: {}'.format(bpv_draco))
+        if args.mode == 'train':
+            visualize_voxels(x[0], voxel_size*40)
+        else:
+            visualize_points(x[0])
+            voxel = get_sparse_voxels(x[0], voxel_size=voxel_size, point_weight=1.0,
                                       voxel_min_bound=voxel_min_bound, voxel_max_bound=voxel_max_bound)
             print('Num voxels: {}'.format(torch.sum(voxel)))
             visualize_voxels(voxel, voxel_size=voxel_size * 20)
