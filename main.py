@@ -39,7 +39,8 @@ def train_convo_vae(train_from_scratch=False, n_epochs=50, learning_rate=0.001, 
     if not train_from_scratch:
         model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
         if os.path.isfile('model_params/cvae_params_res_{}'.format(resolution[0])):
-            model.load_state_dict(torch.load('model_params/cvae_params_res_{}'.format(resolution[0]), map_location=device))
+            model.load_state_dict(torch.load('model_params/cvae_params_res_{}'.format(resolution[0]),
+                                             map_location=device))
             print('Load pre-trained model ...')
     else:
         model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
