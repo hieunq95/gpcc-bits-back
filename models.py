@@ -73,7 +73,7 @@ class ConvoVAE(nn.Module):
     def decode(self, z):
         h3 = F.relu(self.fc3(z))
         h4 = F.relu(self.fc4(h3))
-        z_new_shape = (h4.size()[0], 32, self.new_dim, self.new_dim, self.new_dim)
+        z_new_shape = (h4.size()[0], 16, self.new_dim, self.new_dim, self.new_dim)
         h4_reshape = torch.reshape(h4, z_new_shape)
         conv_decoded_x = self.conv_decode(h4_reshape)
         return conv_decoded_x
