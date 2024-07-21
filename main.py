@@ -34,7 +34,7 @@ def train_convo_vae(train_from_scratch=False, n_epochs=50, learning_rate=0.001, 
                                 crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound,
                                 n_points_per_cloud=20000, n_mesh_per_class=3000)
 
-    train_loader = DataLoader(train_set, batch_size=32, shuffle=True, drop_last=False)
+    train_loader = DataLoader(train_set, batch_size=32, shuffle=True, drop_last=True)
 
     if not train_from_scratch:
         model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
@@ -199,7 +199,7 @@ def eval_bit_rates(batch_values, subset_size=1, epoch_id=0, obs_precision=25, sa
     results_bitsback, results_bernoulli, results_draco, results_optimal = [], [], [], []
     for batch_size in batch_values:
         print('Evaluate bit rates of compression methods on {} point clouds per batch...'.format(batch_size))
-        test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, drop_last=False)
+        test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, drop_last=True)
         bpv_bits_back_arr, bpv_bernoulli_arr, bpv_draco_arr, bpv_optimal_arr = [], [], [], []
         for batch_idx, data in enumerate(test_loader):
             # if batch_idx > 12:
@@ -274,7 +274,7 @@ def evaluate_bit_depth(depth_values, subset_size=1, batch_size=800, obs_precisio
                                    crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound,
                                    n_points_per_cloud=20000, n_mesh_per_class=3000)
 
-        test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, drop_last=False)
+        test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, drop_last=True)
         # Load model
         model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
         f_name = 'model_params/cvae_params_res_{}'.format(resolution[0])

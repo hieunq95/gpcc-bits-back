@@ -16,16 +16,16 @@ class ConvoVAE(nn.Module):
 
         # down-sampling strategies:
         # resolution = 128:  128 -> 9/3+2(42), 5/3+1(14), 5/3(4) -> 4 (3 layers)
-        # resolution = 64:   64 -> 9/3+1(20), 5/3(6), 2/2(3) -> 3 (3 layers)
-        # resolution = 32:   32 -> 9/3+2(10), 5/3+2(4), 2/2+1(3) -> 3 (3 layers)
+        # resolution = 64:   64 -> 9/3+1(20), 5/3(6), 2/1(4) -> 4 (3 layers)
+        # resolution = 32:   32 -> 5/3(10), 4/2(4), 2/1(3) -> 3 (3 layers)
         if self.in_dim[0] == 128:
             ksp = [[9, 3, 2], [5, 3, 1], [5, 3, 0]]  # [kernel_size, stride, padding] per layer
             new_dim = 4  # new dimensional size after convo layers
         elif self.in_dim[0] == 64:
-            ksp = [[9, 3, 1], [5, 3, 0], [2, 2, 0]]
-            new_dim = 3
+            ksp = [[9, 3, 1], [5, 3, 0], [2, 1, 0]]
+            new_dim = 4
         elif self.in_dim[0] == 32:
-            ksp = [[9, 3, 2], [5, 3, 2], [2, 2, 1]]
+            ksp = [[5, 3, 0], [4, 2, 0], [2, 1, 0]]
             new_dim = 3
 
         self.conv_encode = nn.Sequential(
@@ -33,13 +33,13 @@ class ConvoVAE(nn.Module):
             nn.ReLU(),
             nn.Conv3d(in_channels=8, out_channels=16, kernel_size=ksp[1][0], stride=ksp[1][1], padding=ksp[1][2]),
             nn.ReLU(),
-            nn.Conv3d(in_channels=16, out_channels=32, kernel_size=ksp[2][0], stride=ksp[2][1], padding=ksp[2][2]),
+            nn.Conv3d(in_channels=16, out_channels=16, kernel_size=ksp[2][0], stride=ksp[2][1], padding=ksp[2][2]),
             nn.ReLU(),
         )
 
         # fully-connected layers
         self.new_dim = new_dim
-        self.flat_dim = 32 * self.new_dim**3
+        self.flat_dim = 16 * self.new_dim**3
         self.fc1 = nn.Linear(self.flat_dim, self.h_dim)
         self.fc21 = nn.Linear(self.h_dim, self.latent_dim)
         self.fc22 = nn.Linear(self.h_dim, self.latent_dim)
@@ -47,7 +47,7 @@ class ConvoVAE(nn.Module):
         self.fc4 = nn.Linear(self.h_dim, self.flat_dim)
 
         self.conv_decode = nn.Sequential(
-            nn.ConvTranspose3d(in_channels=32, out_channels=16, kernel_size=ksp[2][0], stride=ksp[2][1], padding=ksp[2][2]),
+            nn.ConvTranspose3d(in_channels=16, out_channels=16, kernel_size=ksp[2][0], stride=ksp[2][1], padding=ksp[2][2]),
             nn.ReLU(),
             nn.ConvTranspose3d(in_channels=16, out_channels=8, kernel_size=ksp[1][0], stride=ksp[1][1], padding=ksp[1][2]),
             nn.ReLU(),
