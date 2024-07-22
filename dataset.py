@@ -233,10 +233,11 @@ if __name__ == '__main__':
         x_batch = torch.squeeze(x_batch)
         bit_depth = int(np.log2(resolution[0]))
         print('bit_depth: {}'.format(bit_depth))
-        bpv_draco = draco_ans(
-            x, x_batch, voxel_size, voxel_min_bound, voxel_max_bound, bit_depth
-        )
-        print('Draco bpv: {}'.format(bpv_draco))
+        if args.mode == 'test':
+            bpv_draco = draco_ans(
+                x, x_batch, voxel_size, voxel_min_bound, voxel_max_bound, bit_depth
+            )
+            print('Draco bpv: {}'.format(bpv_draco))
         if args.mode == 'train':
             visualize_voxels(x[0], voxel_size*40)
         else:

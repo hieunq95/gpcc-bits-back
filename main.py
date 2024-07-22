@@ -183,7 +183,7 @@ def eval_bit_rates(batch_values, subset_size=1, epoch_id=0, obs_precision=25, sa
     voxel_max_bound = np.full(3, 1.0)
     voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
     model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
-    f_name = 'model_params/cvae_params_{}'.format(resolution[0])
+    f_name = 'model_params/cvae_params_res_{}'.format(resolution[0])
     model.load_state_dict(torch.load(f_name, map_location='cpu'))
     print('Model: {}'.format(model))
     model.eval()
@@ -258,7 +258,7 @@ def eval_bit_rates(batch_values, subset_size=1, epoch_id=0, obs_precision=25, sa
     plt.plot(x_axis, results_draco, '-d')
     plt.legend(['Bits-back', 'Optimal', 'No-bits-back', 'Draco'])
     plt.xlabel('Batch size')
-    plt.ylabel('Bit per voxel')
+    plt.ylabel('Bit per point')
     plt.grid(linestyle='--')
     plt.show()
 
@@ -345,7 +345,7 @@ def evaluate_bit_depth(depth_values, subset_size=1, batch_size=800, obs_precisio
     plt.plot(x_axis, results_draco, '-d')
     plt.legend(['Bits-back', 'Optimal', 'No-bits-back', 'Draco'])
     plt.xlabel('Bit depth')
-    plt.ylabel('Bit per voxel')
+    plt.ylabel('Bit per point')
     plt.grid(linestyle='--')
     plt.show()
 
@@ -363,8 +363,8 @@ def plot_bit_rates(batch_values):
     plt.plot(x_axis, results_bernoulli, '--o')
     plt.plot(x_axis, results_draco, '-d')
     plt.legend(['Bits-back', 'Optimal', 'No-bits-back', 'Draco'])
-    plt.xlabel('Batch size')
-    plt.ylabel('Bit per voxel')
+    plt.xlabel('Number of point clouds')
+    plt.ylabel('Bit per point')
     plt.grid(linestyle='--')
     plt.show()
 
@@ -382,7 +382,7 @@ def plot_bit_depth(depth_values):
     plt.plot(x_axis, results_draco, '-d')
     plt.legend(['Bits-back', 'Optimal', 'No-bits-back', 'Draco'])
     plt.xlabel('Bit depth')
-    plt.ylabel('Bit per voxel')
+    plt.ylabel('Bit per point')
     plt.grid(linestyle='--')
     plt.show()
 
@@ -424,7 +424,7 @@ if __name__ == '__main__':
         batch_vals = [100 * i for i in [2, 4, 6, 8, 10, 12]]
         plot_bit_rates(batch_vals)
     elif args.mode == 'plot_depth':
-        depth_vals = [64, 128]
+        depth_vals = [32, 64, 128]
         plot_bit_depth(depth_vals)
     else:
         parser.print_help()

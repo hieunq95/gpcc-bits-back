@@ -579,13 +579,22 @@ def bernoulli_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_
         pfc = codec_compressor.compress(serialized_pop)
         pop_size += len(pfc) * 8
     codec_compressor.flush()
-    pop_size = min(pop_size, 4 * 10**6 * 8)   # compare size of the Codec with size of the deep learning model
+    if data_shape[-1] == 32:
+        model_size = 2.1 * 10**6 * 8  # in bits
+    elif data_shape[-1] == 64:
+        model_size = 4.6 * 10 ** 6 * 8
+    else:
+        model_size = 4.8 * 10 ** 6 * 8
+    pop_size = min(pop_size, model_size)   # compare size of the Codec with size of the deep learning model
     flat_message_len = 32 * len(flat_message)
     bpv_overhead = (pop_size + flat_message_len) / num_voxels
     bpv = flat_message_len / num_voxels
     print('--- NoBB_VAE -- encoded in {} seconds, bpv: {}, bpv_overhead: {}'.format(
         t1 - t0, bpv, bpv_overhead)
     )
+    # free up some memory
+    del message, voxel_batch
+    gc.collect()
     save_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Bernoulli_results/')
     if not os.path.isdir(save_dir):
         os.mkdir(save_dir)
@@ -597,6 +606,9 @@ def bernoulli_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_
     # Decode message
     t0 = time.time()
     message_ = cs.unflatten(flat_message, obs_size)
+    # free up some memory
+    del flat_message, codec_compressor
+    gc.collect()
     data_decoded = []
     for i in range(len(pop_array)):
         pop = pop_array[-1 - i]  # reverse order
@@ -659,6 +671,13 @@ def bits_back_vae_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vo
     codec_compressor.flush()
     # Calculate bit rate and save compressed data
     pop_size = len(compressed_pop) * 8
+    if data_shape[-1] == 32:
+        model_size = 2.1 * 10**6 * 8  # in bits
+    elif data_shape[-1] == 64:
+        model_size = 4.6 * 10 ** 6 * 8
+    else:
+        model_size = 4.8 * 10 ** 6 * 8
+    pop_size = min(pop_size, model_size)  # compare size of the Codec with size of the deep learning model
     bpv_overhead = (pop_size + flat_message_len) / num_voxels
     print('--- BB_VAE -- encoded in {} seconds, bpv: {}, bpv_overhead: {}'.format(
         t1 - t0, flat_message_len / num_voxels, bpv_overhead)
