@@ -562,10 +562,8 @@ def bernoulli_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_
     pop_array = []
     message = init_message
     t0 = time.time()
-    data_tuple = torch.split(voxel_batch, subset_size)
-    point_tuple = torch.split(point_clouds, subset_size)
 
-    for x in data_tuple:  # small batches
+    for x in voxel_batch:  # small batches
         p = model(x).detach().numpy().flatten()
         push, pop = codec(p)
         pop_array.append(pop)
@@ -593,7 +591,7 @@ def bernoulli_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_
         t1 - t0, bpv, bpv_overhead)
     )
     # free up some memory
-    del message, voxel_batch
+    del message
     gc.collect()
     save_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Bernoulli_results/')
     if not os.path.isdir(save_dir):
@@ -602,34 +600,35 @@ def bernoulli_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_
         os.path.expanduser(save_dir + 'Bernoulli_shapenet_{}.npy'.format(num_data)),
         flat_message
     )
+    # large batch cause memory overflow, we can only decode smaller than 800 point clouds
+    if not (data_shape[-1] == 128 and num_data > 800):
+        # Decode message
+        t0 = time.time()
+        message_ = cs.unflatten(flat_message, obs_size)
+        # free up some memory
+        del flat_message, codec_compressor
+        gc.collect()
+        data_decoded = []
+        for i in range(len(pop_array)):
+            pop = pop_array[-1 - i]  # reverse order
+            message_, data_ = pop(message_, )
+            data_decoded.append(np.asarray(data_, dtype=np.uint8))  # cast dtype to prevent out of memory issue
+        t1 = time.time()
 
-    # Decode message
-    t0 = time.time()
-    message_ = cs.unflatten(flat_message, obs_size)
-    # free up some memory
-    del flat_message, codec_compressor
-    gc.collect()
-    data_decoded = []
-    for i in range(len(pop_array)):
-        pop = pop_array[-1 - i]  # reverse order
-        message_, data_ = pop(message_, )
-        data_decoded.append(np.asarray(data_, dtype=np.uint8))  # cast dtype to prevent out of memory issue
-    t1 = time.time()
-
-    data_decoded = reversed(data_decoded)
-    # Check quality
-    iou_arr = []
-    for x, x_, pb in zip(data_tuple, data_decoded, point_tuple):
-        np.testing.assert_equal(x.detach().numpy().flatten(), x_)
-        decoded_voxel = np.reshape(np.squeeze(x_), data_shape[2:])
-        original_voxel = get_sparse_voxels(
-            torch.squeeze(pb), voxel_size, 1.0, voxel_min_bound, voxel_max_bound
-        ).detach().numpy()
-        iou_i = calculate_iou(original_voxel, decoded_voxel)
-        iou_arr.append(iou_i)
-    print('--- NoBB_VAE -- decoded in {} seconds, average IoU: {}, std IoU: {}'.format(
-        t1 - t0, np.mean(iou_arr), np.std(iou_arr))
-    )
+        data_decoded = reversed(data_decoded)
+        # Check quality
+        iou_arr = []
+        for x, x_, pb in zip(voxel_batch, data_decoded, point_clouds):
+            np.testing.assert_equal(x.detach().numpy().flatten(), x_)
+            decoded_voxel = np.reshape(np.squeeze(x_), data_shape[2:])
+            original_voxel = get_sparse_voxels(
+                torch.squeeze(pb), voxel_size, 1.0, voxel_min_bound, voxel_max_bound
+            ).detach().numpy()
+            iou_i = calculate_iou(original_voxel, decoded_voxel)
+            iou_arr.append(iou_i)
+        print('--- NoBB_VAE -- decoded in {} seconds, average IoU: {}, std IoU: {}'.format(
+            t1 - t0, np.mean(iou_arr), np.std(iou_arr))
+        )
     return bpv_overhead, bpv
 
 def bits_back_vae_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_bound,

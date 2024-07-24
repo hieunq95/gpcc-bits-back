@@ -80,6 +80,11 @@ def train_convo_vae(train_from_scratch=False, n_epochs=50, learning_rate=0.001, 
         plt.savefig('images/train_loss.png')
 
 def test_convo_vae(batch_size=32, generate=True, epoch_id=0, resolution=64):
+    """
+       This function should be used for the illustration purpose only, e.g., it will compress some point clouds
+       and visualize the probability density estimation of the VAE model. For compressing large batch of point cloud,
+       see other functions `eval_bit_rates` and `eval_bit_depth`
+       """
     print('Test model\n')
     resolution = np.full(3, resolution, dtype=np.int32)
     voxel_min_bound = np.full(3, -1.0)
@@ -94,11 +99,10 @@ def test_convo_vae(batch_size=32, generate=True, epoch_id=0, resolution=64):
         f_name = 'model_params/cvae_params_{}'.format(epoch_id)
     else:
         f_name = 'model_params/cvae_params_res_{}'.format(resolution[0])
-    if os.path.isfile(f_name):
-        model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
-        model.load_state_dict(torch.load(f_name, map_location='cpu'))
-        print('Model: {}'.format(model))
-        model.eval()
+    model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
+    model.load_state_dict(torch.load(f_name, map_location=torch.device('cpu')))
+    print('Model: {}'.format(model))
+    model.eval()
 
     rec_net = torch_fun_to_numpy_fun(model.encode)
     gen_net = torch_fun_to_numpy_fun(model.decode)
@@ -114,8 +118,8 @@ def test_convo_vae(batch_size=32, generate=True, epoch_id=0, resolution=64):
         if resolution[0] == 128 and x_batch.size()[0] > 100:
             print('Handle large batch x_batch size: {}'.format(x_batch.size()))
             x_small_batches = torch.split(x_batch, 10)
-            x_probs = torch.zeros(x_batch.size())  # final output of the forward pass through the mode
-            x_recon = torch.zeros(x_batch.size())
+            x_probs = torch.zeros(x_batch.size(), device='cpu')  # final output of the forward pass through the mode
+            x_recon = torch.zeros(x_batch.size(), device='cpu')
             for i, x in enumerate(x_small_batches):
                 x_len = x.size()[0]
                 x_prob_i = model(x).detach()
@@ -126,6 +130,9 @@ def test_convo_vae(batch_size=32, generate=True, epoch_id=0, resolution=64):
             x_recon = Bernoulli(x_probs).sample()
         print('x_probs: {}'.format(x_probs.size()))
         print('x_recon: {}'.format(x_recon.size()))
+        # free up memory
+        del x_probs
+        gc.collect()
         if generate:
             gen_probs = model.generate(x_batch.size()[0])
             x_gen_batch = Bernoulli(gen_probs).sample()
@@ -375,11 +382,11 @@ def plot_bit_depth(depth_values):
     results_draco = np.load(output_dir + 'bit_rate_vs_bit_depth_draco.npy')
     results_optimal = np.load(output_dir + 'bit_rate_vs_bit_depth_optimal.npy')
 
-    x_axis = np.log2(depth_values)
-    plt.plot(x_axis, results_bitsback, '-^')
-    plt.plot(x_axis, results_optimal, '--x')
-    plt.plot(x_axis, results_bernoulli, '--o')
-    plt.plot(x_axis, results_draco, '-d')
+    x_axis = np.flip(np.log2(depth_values))
+    plt.plot(x_axis, np.flip(results_bitsback), '-^')
+    plt.plot(x_axis, np.flip(results_optimal), '--x')
+    plt.plot(x_axis, np.flip(results_bernoulli), '--o')
+    plt.plot(x_axis, np.flip(results_draco), '-d')
     plt.legend(['Bits-back', 'Optimal', 'No-bits-back', 'Draco'])
     plt.xlabel('Bit depth')
     plt.ylabel('Bit per point')
@@ -418,13 +425,13 @@ if __name__ == '__main__':
         batch_vals = [100 * i for i in [2, 4, 6, 8, 10, 12]]
         eval_bit_rates(batch_values=batch_vals, subset_size=1, epoch_id=args.ep, save_results=True)
     elif args.mode == 'eval_depth':
-        depth_vals = [64, 128]
+        depth_vals = [128, 64, 32]
         evaluate_bit_depth(depth_vals, subset_size=1, batch_size=args.batch, save_results=True)
     elif args.mode == 'plot_rate':
         batch_vals = [100 * i for i in [2, 4, 6, 8, 10, 12]]
         plot_bit_rates(batch_vals)
     elif args.mode == 'plot_depth':
-        depth_vals = [32, 64, 128]
+        depth_vals = [128, 64, 32]
         plot_bit_depth(depth_vals)
     else:
         parser.print_help()
