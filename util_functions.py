@@ -568,8 +568,8 @@ def bernoulli_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_
         push, pop = codec(p)
         pop_array.append(pop)
         message, = push(message, np.asarray(x.detach().numpy().flatten(), dtype=np.uint8))
-    t1 = time.time()
     flat_message = cs.flatten(message)
+    t1 = time.time()
     codec_compressor = lzma.LZMACompressor()
     pop_size = 0
     for pf in pop_array:
@@ -591,7 +591,7 @@ def bernoulli_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_
         t1 - t0, bpv, bpv_overhead)
     )
     # free up some memory
-    del message
+    del message, codec_compressor
     gc.collect()
     save_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Bernoulli_results/')
     if not os.path.isdir(save_dir):
@@ -606,7 +606,7 @@ def bernoulli_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_
         t0 = time.time()
         message_ = cs.unflatten(flat_message, obs_size)
         # free up some memory
-        del flat_message, codec_compressor
+        del flat_message
         gc.collect()
         data_decoded = []
         for i in range(len(pop_array)):
@@ -629,6 +629,8 @@ def bernoulli_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_
         print('--- NoBB_VAE -- decoded in {} seconds, average IoU: {}, std IoU: {}'.format(
             t1 - t0, np.mean(iou_arr), np.std(iou_arr))
         )
+        del decoded_voxel, data_decoded
+        gc.collect()
     return bpv_overhead, bpv
 
 def bits_back_vae_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_bound,
@@ -649,7 +651,7 @@ def bits_back_vae_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vo
     obs_shape = (subset_size, data_shape[1], data_shape[2], data_shape[3], data_shape[4])  # [1, 1, 128, 128, 128]
     obs_size = np.prod(obs_shape)
 
-    data = np.split(np.asarray(voxel_batch.detach().numpy(), dtype=np.uint8), num_subsets)
+    data = np.split(np.asarray(voxel_batch.detach().numpy(), dtype=np.bool_), num_subsets)
     # Create codec
     vae_append, vae_pop = cs.repeat(cs.substack(
         bb_ans.VAE(gen_net, rec_net, obs_codec, 8, obs_precision),
@@ -660,9 +662,6 @@ def bits_back_vae_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vo
     message, = vae_append(init_message, data)
     flat_message = cs.flatten(message)
     flat_message_len = 32 * len(flat_message)
-    # free up some memory
-    del message, voxel_batch
-    gc.collect()
     t1 = time.time()
     # Compress the Codec itself (should be useful for communication of the model and codec)
     codec_compressor = lzma.LZMACompressor()
@@ -681,6 +680,11 @@ def bits_back_vae_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vo
     print('--- BB_VAE -- encoded in {} seconds, bpv: {}, bpv_overhead: {}'.format(
         t1 - t0, flat_message_len / num_voxels, bpv_overhead)
     )
+    # free up some memory
+    del message, data, codec_compressor
+    gc.collect()
+
+    # save results
     save_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/BB_VAE_results/')
     if not os.path.isdir(save_dir):
         os.mkdir(save_dir)
@@ -693,9 +697,12 @@ def bits_back_vae_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vo
     t0 = time.time()
     message = cs.unflatten(flat_message, obs_size + latent_size)
     # free up some memory
-    del flat_message, codec_compressor
+    del flat_message
     gc.collect()
     message, data_ = vae_pop(message)
+    del message
+    gc.collect()
+    data = np.split(np.asarray(voxel_batch.detach().numpy(), dtype=np.bool_), num_subsets)
     np.testing.assert_equal(data, data_)  # Check lossless compression
     t1 = time.time()
     # Check quality
@@ -712,7 +719,14 @@ def bits_back_vae_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vo
         t1 - t0, np.mean(iou_arr), np.std(iou_arr))
     )
 
+    del data
+    gc.collect()
+
     return bpv_overhead, data_
+
+
+if __name__ == '__main__':
+    import_dataset(False)
 
 
 
