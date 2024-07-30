@@ -3,7 +3,6 @@ import shutil
 import os
 import sys
 import time
-import scipy
 import lzma
 import dill
 import gc
@@ -17,30 +16,6 @@ import torch
 from plyfile import PlyData, PlyElement
 from autograd.builtins import tuple as ag_tuple
 from craystack import bb_ans
-
-class ArraySymbol:
-    def __init__(self, arr: np.ndarray):
-        self.arr = arr
-
-    def __lt__(self, other: np.ndarray):
-        return self.arr.tobytes() < other.arr.tobytes()
-
-    def __gt__(self, other: np.ndarray):
-        return self.arr.tobytes() > other.arr.tobytes()
-
-    def __eq__(self, other):
-        return (self.arr == other.arr).all()
-
-def ArrayCodec(codec):
-    def push(message, x):
-        return codec.push(message, x.arr)
-
-    def pop(message):
-        message, x = codec.pop(message)
-        return message, ArraySymbol(x)
-
-    return cs.Codec(push, pop)
-
 
 def custom_draw_geometry_with_rotation(pcd, interactive=True, include_coordinate=True):
     def rotate_view(vis):
@@ -72,7 +47,7 @@ def visualize_points(points, interactive=True):
     custom_draw_geometry_with_rotation(pcd, interactive=interactive)
 
 
-def visualize_voxels(voxel_cube, voxel_size):
+def visualize_voxels(voxel_cube, voxel_size=0.001):
     """
     Visualize 3D sparse voxel cubes `[height, width, length]`
     :param voxel_cube:
@@ -405,109 +380,6 @@ def draco_decompress(input_file_names, output_folder):
 
     return decompressed_ply_files
 
-
-def import_dataset(save_img=True):
-    def rgb_to_grayscale(rgb_image, width=480):
-        # Define the weights for each channel
-        weights = np.array([0.2989, 0.5870, 0.1140])
-
-        # Compute the dot product of the image and the weights
-        gray_image = np.dot(rgb_image[..., :3], weights)
-
-        # Reshape to add an additional dimension for consistency
-        gray_image = gray_image.reshape((width, width, 1))
-
-        return gray_image
-    if save_img:
-        path = os.path.expanduser('~/Downloads/nyu_depth_v2_labeled.mat')
-        save_path = os.path.expanduser('~/open3d_data/extract/processed_nyu/')
-        nyu_dataset = mat73.loadmat(path)
-        keys = list(nyu_dataset.keys())
-        print(keys)
-        images = np.asarray(nyu_dataset['images'])
-        depths = np.asarray(nyu_dataset['depths'])
-        print('images: {}'.format(images.shape))  # [H, W, 3, N]
-        print('depths: {}'.format(depths.shape))  # [H, W, N]
-        (W, H, N) = depths.shape
-        depths = depths[:, :W, :]
-        images = images[:, :W, :, :]
-        gray_images = np.zeros(shape=(W, W, 1, N), dtype=np.float32)
-        for i in range(N):
-            gray_images[:, :, :, i] = rgb_to_grayscale(images[:, :, :, i], width=W)
-
-        depths = np.ascontiguousarray(depths).astype(np.float32)
-        gray_images = np.ascontiguousarray(gray_images).astype(np.float32) / 255.0
-        print('Save NYU dataset to ' + save_path)
-        np.save(os.path.expanduser(save_path + 'nyu_depths'), depths)
-        np.save(os.path.expanduser(save_path + 'nyu_images'), gray_images)
-    else:
-        depths = np.load(os.path.expanduser('~/open3d_data/extract/processed_nyu/nyu_depths.npy'))
-        images = np.load(os.path.expanduser('~/open3d_data/extract/processed_nyu/nyu_images.npy'))
-        print('depths: {}'.format(depths.shape))
-        print('images: {}'.format(images.shape))
-        for i in range(10):
-            dep = np.ascontiguousarray(depths[:, :, -i])
-            img = np.ascontiguousarray(images[:, :, :, -i])
-            rgbd_depth = o3d.geometry.Image(dep)
-            rgbd_color = o3d.geometry.Image(img)
-            rgbd_img = o3d.geometry.RGBDImage.create_from_color_and_depth(rgbd_color, rgbd_depth)
-            print('rgbd_img: {}'.format(rgbd_img))
-            pcd = o3d.geometry.PointCloud.create_from_rgbd_image(
-                rgbd_img,
-                o3d.camera.PinholeCameraIntrinsic(
-                    o3d.camera.PinholeCameraIntrinsicParameters.PrimeSenseDefault))
-            # Flip it, otherwise the pointcloud will be upside down
-            pcd.transform([[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]])
-            print(pcd)
-            points = np.asarray(pcd.points)
-            # visualize_points(points)
-            # Rescale point cloud
-            voxel_min_bound = np.full(3, -1.0)
-            voxel_max_bound = np.full(3, 1.0)
-            shape = np.full(3, 32, dtype=np.int32)
-            points = rescale_points(points, pcd.get_min_bound(), pcd.get_max_bound(), voxel_min_bound, voxel_max_bound)
-            visualize_points(points)
-            voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / shape[0]
-            voxels = get_sparse_voxels(points, voxel_min_bound=voxel_min_bound, voxel_max_bound=voxel_max_bound,
-                                       voxel_size=voxel_size, point_weight=1.0)
-            visualize_voxels(voxels, voxel_size*20)
-            ocv = torch.sum(voxels)
-            print('voxels.size(): {}'.format(voxels.size()))
-            print('ocv: {}'.format(ocv))
-
-            # octree
-            voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(pcd, voxel_size=0.00005)
-            o3d.visualization.draw_geometries([voxel_grid])
-            octree = o3d.geometry.Octree(max_depth=7)
-            octree.create_from_voxel_grid(voxel_grid)
-            o3d.visualization.draw_geometries([octree])
-            print('octree: {}'.format(octree))
-            print('size of octree: {}'.format(sys.getsizeof(octree)))
-            print('size of voxels: {}'.format(sys.getsizeof(voxels)))
-            print(octree.root_node)
-
-def convert_ply_float64_to_float32(input_filename, output_filename):
-    # Read the PLY file
-    ply_data = PlyData.read(input_filename)
-
-    # Extract the vertex data
-    vertex_data = ply_data['vertex'].data
-
-    # Convert float64 fields to float32
-    converted_vertex_data = np.array([
-        (np.float32(vertex['x']), np.float32(vertex['y']), np.float32(vertex['z']))
-        for vertex in vertex_data
-    ], dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4')])
-
-    # Create a new PlyElement
-    new_vertex_element = PlyElement.describe(converted_vertex_data, 'vertex')
-
-    # Create a new PlyData instance
-    new_ply_data = PlyData([new_vertex_element], text=ply_data.text)
-
-    # Write the new PLY file
-    new_ply_data.write(output_filename)
-
 # Functions to compress dataset
 def draco_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_bound, quantz_level):
     draco_results_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Draco_results/')
@@ -580,9 +452,9 @@ def bernoulli_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_
     if data_shape[-1] == 32:
         model_size = 2.1 * 10**6 * 8  # in bits
     elif data_shape[-1] == 64:
-        model_size = 4.6 * 10 ** 6 * 8
+        model_size = 8.4 * 10**6 * 8
     else:
-        model_size = 4.8 * 10 ** 6 * 8
+        model_size = 8.4 * 10**6 * 8
     pop_size = min(pop_size, model_size)   # compare size of the Codec with size of the deep learning model
     flat_message_len = 32 * len(flat_message)
     bpv_overhead = (pop_size + flat_message_len) / num_voxels
@@ -672,9 +544,9 @@ def bits_back_vae_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vo
     if data_shape[-1] == 32:
         model_size = 2.1 * 10**6 * 8  # in bits
     elif data_shape[-1] == 64:
-        model_size = 4.6 * 10 ** 6 * 8
+        model_size = 8.4 * 10**6 * 8
     else:
-        model_size = 4.8 * 10 ** 6 * 8
+        model_size = 8.4 * 10**6 * 8
     pop_size = min(pop_size, model_size)  # compare size of the Codec with size of the deep learning model
     bpv_overhead = (pop_size + flat_message_len) / num_voxels
     print('--- BB_VAE -- encoded in {} seconds, bpv: {}, bpv_overhead: {}'.format(
@@ -724,9 +596,6 @@ def bits_back_vae_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vo
 
     return bpv_overhead, data_
 
-
-if __name__ == '__main__':
-    import_dataset(False)
 
 
 

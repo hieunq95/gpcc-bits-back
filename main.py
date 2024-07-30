@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from torch import optim
 from torch.utils.data import DataLoader
 from torch.distributions import Bernoulli
-from dataset import ShapeNetDataset
+from dataset import ShapeNetDataset, SunRgbdDataset
 from util_functions import *
 from models import ConvoVAE
 
@@ -24,23 +24,27 @@ else:
     device = 'cpu'
 print('Device: {}'.format(device))
 
-def train_convo_vae(train_from_scratch=False, n_epochs=50, learning_rate=0.001, resolution=64):
+def train_convo_vae(train_from_scratch=False, n_epochs=50, learning_rate=0.001, resolution=64, dataset_type='shape'):
     resolution = np.full(3, resolution, dtype=np.int32)
     voxel_min_bound = np.full(3, -1.0)
     voxel_max_bound = np.full(3, 1.0)
-    voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
-    train_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', make_new_dataset=False,
-                                mode='train', resolution=resolution, device=device,
-                                crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound,
-                                n_points_per_cloud=20000, n_mesh_per_class=3000)
+    param_name = 'params_{}_res_{}'.format(dataset_type, resolution[0])
+    if dataset_type == 'shape':
+        train_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', make_new_dataset=False,
+                                    mode='train', resolution=resolution, device=device,
+                                    crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound)
+    else:
+        train_set = SunRgbdDataset(dataset_path='~/open3d_data/extract/SUNRGBD/', make_new_dataset=False,
+                                   mode='train', resolution=resolution, device=device,
+                                   crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound,
+                                   n_points_per_cloud=20000)
 
     train_loader = DataLoader(train_set, batch_size=32, shuffle=True, drop_last=True)
 
     if not train_from_scratch:
         model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
-        if os.path.isfile('model_params/cvae_params_res_{}'.format(resolution[0])):
-            model.load_state_dict(torch.load('model_params/cvae_params_res_{}'.format(resolution[0]),
-                                             map_location=device))
+        if os.path.isfile('model_params/' + param_name):
+            model.load_state_dict(torch.load('model_params/' + param_name, map_location=device))
             print('Load pre-trained model ...')
     else:
         model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
@@ -69,9 +73,7 @@ def train_convo_vae(train_from_scratch=False, n_epochs=50, learning_rate=0.001, 
         loss_avg.append(np.mean(ep_loss))
         print('Epoch: {}, Avg_Loss: {}'.format(epoch, np.mean(ep_loss)))
         # save model
-        if epoch % 20 == 0:
-            torch.save(model.state_dict(), 'model_params/cvae_params_{}'.format(epoch))
-        torch.save(model.state_dict(), 'model_params/cvae_params_res_{}'.format(resolution[0]))  # final model
+        torch.save(model.state_dict(), 'model_params/' + param_name)
         # save loss figure
         x_axis = np.arange(len(loss_avg))
         plt.plot(x_axis, np.array(loss_avg), '-b')
@@ -79,7 +81,7 @@ def train_convo_vae(train_from_scratch=False, n_epochs=50, learning_rate=0.001, 
         plt.ylabel('Loss')
         plt.savefig('images/train_loss.png')
 
-def test_convo_vae(batch_size=32, generate=True, epoch_id=0, resolution=64):
+def test_convo_vae(batch_size=32, generate=True, resolution=64, dataset_type='shape'):
     """
        This function should be used for the illustration purpose only, e.g., it will compress some point clouds
        and visualize the probability density estimation of the VAE model. For compressing large batch of point cloud,
@@ -90,17 +92,18 @@ def test_convo_vae(batch_size=32, generate=True, epoch_id=0, resolution=64):
     voxel_min_bound = np.full(3, -1.0)
     voxel_max_bound = np.full(3, 1.0)
     voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
-    test_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', make_new_dataset=False,
-                               mode='test', resolution=resolution, device='cpu',
-                               crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound,
-                               n_points_per_cloud=20000, n_mesh_per_class=3000)
-    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, drop_last=True)
-    if epoch_id != 0:
-        f_name = 'model_params/cvae_params_{}'.format(epoch_id)
+    param_name = 'params_{}_res_{}'.format(dataset_type, resolution[0])
+    if dataset_type == 'shape':
+        test_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', make_new_dataset=False,
+                                   mode='test', resolution=resolution, device='cpu',
+                                   crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound)
     else:
-        f_name = 'model_params/cvae_params_res_{}'.format(resolution[0])
+        test_set = SunRgbdDataset(dataset_path='~/open3d_data/extract/SUNRGBDv2Test/', make_new_dataset=False,
+                                  mode='test', resolution=resolution, crop_min_bound=voxel_min_bound,
+                                  crop_max_bound=voxel_max_bound)
+    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, drop_last=True)
     model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
-    model.load_state_dict(torch.load(f_name, map_location=torch.device('cpu')))
+    model.load_state_dict(torch.load('model_params/' + param_name, map_location=torch.device('cpu')))
     print('Model: {}'.format(model))
     model.eval()
 
@@ -158,7 +161,7 @@ def test_convo_vae(batch_size=32, generate=True, epoch_id=0, resolution=64):
                 x_vis = x_batch_j.detach().numpy().astype(np.int32)
                 print('Num voxels: {}'.format(np.sum(x_vis)))
                 try:
-                    visualize_voxels(x_vis, voxel_size*40)
+                    visualize_voxels(x_vis)
                 except KeyboardInterrupt:
                     sys.exit()
 
@@ -167,30 +170,30 @@ def test_convo_vae(batch_size=32, generate=True, epoch_id=0, resolution=64):
                     iou_i = calculate_iou(x_vis, x_rec_vis)
                     acc_i = calculate_accuracy(x_vis, x_rec_vis)
                     print('IoU per voxel: {} / Accuracy per voxel: {}'.format(iou_i, acc_i))
-                    visualize_voxels(x_rec_vis, voxel_size*40)
+                    visualize_voxels(x_rec_vis)
                 except KeyboardInterrupt:
                     sys.exit()
 
                 x_dec_vis = x_decoded_j.astype(np.int32)
                 try:
-                    visualize_voxels(x_dec_vis, voxel_size * 40)
+                    visualize_voxels(x_dec_vis)
                 except KeyboardInterrupt:
                     sys.exit()
             else:
                 x_gen_j = torch.squeeze(x_gen_batch[j])
                 x_gen_vis = x_gen_j.detach().numpy().astype(np.int32)
                 try:
-                    visualize_voxels(x_gen_vis, voxel_size*40)
+                    visualize_voxels(x_gen_vis)
                 except KeyboardInterrupt:
                     sys.exit()
 
-def eval_bit_rates(batch_values, subset_size=1, epoch_id=0, obs_precision=25, save_results=True):
+def eval_bit_rates(batch_values, subset_size=1, obs_precision=25, dataset_type='shape', save_results=True):
     resolution = np.full(3, 64, dtype=np.int32)
     voxel_min_bound = np.full(3, -1.0)
     voxel_max_bound = np.full(3, 1.0)
     voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
     model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
-    f_name = 'model_params/cvae_params_res_{}'.format(resolution[0])
+    f_name = 'model_params/params_{}_res_{}'.format(dataset_type, resolution[0])
     model.load_state_dict(torch.load(f_name, map_location='cpu'))
     print('Model: {}'.format(model))
     model.eval()
@@ -199,10 +202,14 @@ def eval_bit_rates(batch_values, subset_size=1, epoch_id=0, obs_precision=25, sa
     gen_net = torch_fun_to_numpy_fun(model.decode)
     obs_codec = lambda p: cs.Bernoulli(p, obs_precision)
 
-    test_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', make_new_dataset=False,
-                               mode='test', resolution=resolution, device='cpu',
-                               crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound,
-                               n_points_per_cloud=20000, n_mesh_per_class=3000)
+    if dataset_type == 'shape':
+        test_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', make_new_dataset=False,
+                                   mode='test', resolution=resolution, device='cpu',
+                                   crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound)
+    else:
+        test_set = SunRgbdDataset(dataset_path='~/open3d_data/extract/SUNRGBDv2Test/', make_new_dataset=False,
+                                  mode='test', resolution=resolution, crop_min_bound=voxel_min_bound,
+                                  crop_max_bound=voxel_max_bound)
 
     results_bitsback, results_bernoulli, results_draco, results_optimal = [], [], [], []
     for batch_size in batch_values:
@@ -250,7 +257,10 @@ def eval_bit_rates(batch_values, subset_size=1, epoch_id=0, obs_precision=25, sa
     results_optimal = np.asarray(results_optimal)
 
     if save_results:
-        output_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Bit_rate_results/')
+        if dataset_type == 'shape':
+            output_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Bit_rate_results/')
+        else:
+            output_dir = os.path.expanduser('~/open3d_data/extract/processed_sunrgbd/Bit_rate_results/')
         if not os.path.isdir(output_dir):
             os.mkdir(output_dir)
         np.save(output_dir + 'bit_rate_vs_batch_size_bitsback.npy', results_bitsback)
@@ -269,7 +279,8 @@ def eval_bit_rates(batch_values, subset_size=1, epoch_id=0, obs_precision=25, sa
     plt.grid(linestyle='--')
     plt.show()
 
-def evaluate_bit_depth(depth_values, subset_size=1, batch_size=800, obs_precision=25, save_results=True):
+def evaluate_bit_depth(depth_values, subset_size=1, batch_size=800, obs_precision=25,
+                       dataset_type='shape', save_results=True):
     voxel_min_bound = np.full(3, -1.0)
     voxel_max_bound = np.full(3, 1.0)
     results_bitsback, results_bernoulli, results_draco, results_optimal = [], [], [], []
@@ -277,15 +288,19 @@ def evaluate_bit_depth(depth_values, subset_size=1, batch_size=800, obs_precisio
         resolution = np.full(3, depth, dtype=np.int32)
         voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
         # Load dataset
-        test_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', make_new_dataset=False,
-                                   mode='test', resolution=resolution, device='cpu',
-                                   crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound,
-                                   n_points_per_cloud=20000, n_mesh_per_class=3000)
+        if dataset_type == 'shape':
+            test_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', make_new_dataset=False,
+                                       mode='test', resolution=resolution, device='cpu',
+                                       crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound)
+        else:
+            test_set = SunRgbdDataset(dataset_path='~/open3d_data/extract/SUNRGBDv2Test/', make_new_dataset=False,
+                                      mode='test', resolution=resolution, crop_min_bound=voxel_min_bound,
+                                      crop_max_bound=voxel_max_bound)
 
         test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, drop_last=True)
         # Load model
         model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
-        f_name = 'model_params/cvae_params_res_{}'.format(resolution[0])
+        f_name = 'model_params/params_{}_res_{}'.format(dataset_type, resolution[0])
         model.load_state_dict(torch.load(f_name, map_location='cpu'))
         print('Model: {}'.format(model))
         model.eval()
@@ -337,7 +352,10 @@ def evaluate_bit_depth(depth_values, subset_size=1, batch_size=800, obs_precisio
     results_optimal = np.asarray(results_optimal)
 
     if save_results:
-        output_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Bit_rate_results/')
+        if dataset_type == 'shape':
+            output_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Bit_depth_results/')
+        else:
+            output_dir = os.path.expanduser('~/open3d_data/extract/processed_sunrgbd/Bit_depth_results/')
         if not os.path.isdir(output_dir):
             os.mkdir(output_dir)
         np.save(output_dir + 'bit_rate_vs_bit_depth_bitsback.npy', results_bitsback)
@@ -376,7 +394,7 @@ def plot_bit_rates(batch_values):
     plt.show()
 
 def plot_bit_depth(depth_values):
-    output_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Bit_rate_results/')
+    output_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Bit_depth_results/')
     results_bitsback = np.load(output_dir + 'bit_rate_vs_bit_depth_bitsback.npy')
     results_bernoulli = np.load(output_dir + 'bit_rate_vs_bit_depth_bernoulli.npy')
     results_draco = np.load(output_dir + 'bit_rate_vs_bit_depth_draco.npy')
@@ -410,23 +428,20 @@ if __name__ == '__main__':
                         help='Use 1 if we want to generate random samples from the model')
     parser.add_argument('--res', type=int, default=64,
                         help='Resolution of voxels: [32, 64, 128]')
+    parser.add_argument('--type', type=str, default='shape',
+                        help='Dataset type: [shape, sun]')
     args = parser.parse_args()
     if args.mode == 'train':
-        if args.init == 0:
-            train_convo_vae(train_from_scratch=False, n_epochs=args.ep, learning_rate=args.lr, resolution=args.res)
-        else:
-            train_convo_vae(train_from_scratch=True, n_epochs=args.ep, learning_rate=args.lr, resolution=args.res)
+        train_convo_vae(train_from_scratch=bool(args.init), n_epochs=args.ep, learning_rate=args.lr,
+                        resolution=args.res, dataset_type=args.type)
     elif args.mode == 'test':
-        if args.gen == 1:
-            test_convo_vae(batch_size=args.batch, generate=True, epoch_id=args.ep, resolution=args.res)
-        else:
-            test_convo_vae(batch_size=args.batch, generate=False, epoch_id=args.ep, resolution=args.res)
+        test_convo_vae(batch_size=args.batch, generate=bool(args.gen), resolution=args.res, dataset_type=args.type)
     elif args.mode == 'eval_rate':
         batch_vals = [100 * i for i in [2, 4, 6, 8, 10, 12]]
-        eval_bit_rates(batch_values=batch_vals, subset_size=1, epoch_id=args.ep, save_results=True)
+        eval_bit_rates(batch_values=batch_vals, subset_size=1, dataset_type=args.type, save_results=True)
     elif args.mode == 'eval_depth':
         depth_vals = [128, 64, 32]
-        evaluate_bit_depth(depth_vals, subset_size=1, batch_size=args.batch, save_results=True)
+        evaluate_bit_depth(depth_vals, subset_size=1, dataset_type=args.type, batch_size=args.batch, save_results=True)
     elif args.mode == 'plot_rate':
         batch_vals = [100 * i for i in [2, 4, 6, 8, 10, 12]]
         plot_bit_rates(batch_vals)
