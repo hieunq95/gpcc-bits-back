@@ -433,25 +433,52 @@ def plot_bit_rates(batch_values, dataset_type='shape'):
     plt.grid(linestyle='--')
     plt.show()
 
-def plot_bit_depth(depth_values, dataset_type='shape'):
-    if dataset_type == 'shape':
-        output_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Bit_depth_results/')
-    else:
-        output_dir = os.path.expanduser('~/open3d_data/extract/processed_sunrgbd/Bit_depth_results/')
-    results_bitsback = np.load(output_dir + 'bit_rate_vs_bit_depth_bitsback.npy')
-    results_bernoulli = np.load(output_dir + 'bit_rate_vs_bit_depth_bernoulli.npy')
-    results_draco = np.load(output_dir + 'bit_rate_vs_bit_depth_draco.npy')
-    results_optimal = np.load(output_dir + 'bit_rate_vs_bit_depth_optimal.npy')
+def plot_bit_depth(depth_values):
+    # Load the data
+    shapenet_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Bit_depth_results/')
+    sunrgbd_dir = os.path.expanduser('~/open3d_data/extract/processed_sunrgbd/Bit_depth_results/')
+    results_bitsback_shape = np.load(shapenet_dir + 'bit_rate_vs_bit_depth_bitsback.npy')
+    results_bitsback_sun = np.load(sunrgbd_dir + 'bit_rate_vs_bit_depth_bitsback.npy')
+    results_draco_shape = np.load(shapenet_dir + 'bit_rate_vs_bit_depth_draco.npy')
+    results_draco_sun = np.load(sunrgbd_dir + 'bit_rate_vs_bit_depth_draco.npy')
+    # print out
+    print('Bits-back compression on Shapenet: {}'.format(np.round(results_bitsback_shape, 2)))
+    print('Bits-back compression on Sun-RGBD: {}'.format(np.round(results_bitsback_sun, 2)))
+    print('Draco compression on Shapenet    : {}'.format(np.round(results_draco_shape, 2)))
+    print('Draco compression on Sun-RGBD    : {}'.format(np.round(results_draco_sun, 2)))
 
+    # Flip and set the x-axis (bit depth) values
     x_axis = np.flip(np.log2(depth_values))
-    plt.plot(x_axis, np.flip(results_bitsback), '-^')
-    plt.plot(x_axis, np.flip(results_optimal), '--x')
-    plt.plot(x_axis, np.flip(results_bernoulli), '--o')
-    plt.plot(x_axis, np.flip(results_draco), '-d')
-    plt.legend(['Bits-back', 'Optimal', 'No-bits-back', 'Draco'])
-    plt.xlabel('Bit depth')
-    plt.ylabel('Bit per point')
-    plt.grid(linestyle='--')
+
+    # Create subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6, 3))  # 1 row, 2 columns
+
+    # Plot the first subplot (Shapenet results)
+    ax1.plot(x_axis, np.flip(results_bitsback_shape), '-^', label='Bits-back (Shapenet)')
+    ax1.plot(x_axis, np.flip(results_draco_shape), '-d', label='Draco (Shapenet)')
+    ax1.set_xlabel('Bit depth')
+    ax1.set_ylabel('Bit per point')
+    ax1.set_title('Shapenet Results')
+    ax1.legend()
+    ax1.grid(linestyle='--')
+
+    # Plot the second subplot (SUN-RGBD results)
+    ax2.plot(x_axis, np.flip(results_bitsback_sun), '--^', label='Bits-back (SUN-RGBD)')
+    ax2.plot(x_axis, np.flip(results_draco_sun), '--d', label='Draco (SUN-RGBD)')
+    ax2.set_xlabel('Bit depth')
+    ax2.set_ylabel('Bit per point')
+    ax2.set_title('SUN-RGBD Results')
+    ax2.legend()
+    ax2.grid(linestyle='--')
+
+    # Set the same y-axis limits for both subplots
+    y_max = max(np.max(results_bitsback_shape), np.max(results_draco_shape), np.max(results_bitsback_sun),
+                np.max(results_draco_sun)) + 0.5
+    ax1.set_ylim([-0.1, y_max])
+    ax2.set_ylim([-0.1, y_max])
+
+    # Adjust layout and display the plot
+    plt.tight_layout()  # Adjust subplots to fit in figure area.
     plt.show()
 
 
@@ -490,6 +517,6 @@ if __name__ == '__main__':
         plot_bit_rates(batch_vals, args.type)
     elif args.mode == 'plot_depth':
         depth_vals = [128, 64, 32]
-        plot_bit_depth(depth_vals, args.type)
+        plot_bit_depth(depth_vals)
     else:
         parser.print_help()
