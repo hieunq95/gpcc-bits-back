@@ -111,6 +111,7 @@ def test_convo_vae(batch_size=32, generate=True, resolution=64, dataset_type='sh
     gen_net = torch_fun_to_numpy_fun(model.decode)
     obs_codec = lambda p: cs.Bernoulli(p, 27)
 
+    torch.manual_seed(1234)
     for batch_idx, data in enumerate(test_loader):
         x_batch = get_sparse_voxels_batch(
             points_batch=data, voxel_size=voxel_size, point_weight=1.0,
@@ -146,7 +147,11 @@ def test_convo_vae(batch_size=32, generate=True, resolution=64, dataset_type='sh
         )
 
         print('Compress {} batches of voxels with BB_ANS: {} bpv'.format(batch_size, bpv_bits_back))
-        for j in range(x_batch.size()[0]):
+        if dataset_type == 'shape':
+            data_indices_vis = [13, 17, 21]  # slicing indices for visualization
+        else:
+            data_indices_vis = [4, 10, 22]
+        for j in data_indices_vis:
             x_batch_j = torch.squeeze(x_batch[j])
             x_recon_j = torch.squeeze(x_recon[j])
             x_decoded_j = np.squeeze(decoded_voxels[j])
@@ -216,32 +221,47 @@ def eval_bit_rates(batch_values, subset_size=1, obs_precision=25, dataset_type='
         print('Evaluate bit rates of compression methods on {} point clouds per batch...'.format(batch_size))
         test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, drop_last=True)
         bpv_bits_back_arr, bpv_bernoulli_arr, bpv_draco_arr, bpv_optimal_arr = [], [], [], []
+        # Use different for loops to avoid memory overflow
         for batch_idx, data in enumerate(test_loader):
-            # if batch_idx > 12:
-            #     break
             print('-/ Batch: {}'.format(batch_idx))
             x_batch = get_sparse_voxels_batch(
                 data, voxel_size=voxel_size, voxel_min_bound=voxel_min_bound, voxel_max_bound=voxel_max_bound
             )
             x_batch = torch.unsqueeze(x_batch, 1)
-
             bpv_bits_back, _ = bits_back_vae_ans(
                 data, x_batch, voxel_size, voxel_min_bound, voxel_max_bound,
                 gen_net, rec_net, obs_codec, obs_precision, subset_size
             )
+            bpv_bits_back_arr.append(bpv_bits_back)
+        del x_batch, data
+        gc.collect()
 
+        for batch_idx, data in enumerate(test_loader):
+            print('-/ Batch: {}'.format(batch_idx))
+            x_batch = get_sparse_voxels_batch(
+                data, voxel_size=voxel_size, voxel_min_bound=voxel_min_bound, voxel_max_bound=voxel_max_bound
+            )
+            x_batch = torch.unsqueeze(x_batch, 1)
             bpv_bernoulli, bpv_optimal = bernoulli_ans(
                 data, x_batch, voxel_size, voxel_min_bound, voxel_max_bound, model, obs_precision, subset_size
             )
+            bpv_bernoulli_arr.append(bpv_bernoulli)
+            bpv_optimal_arr.append(bpv_optimal)
+        del x_batch, data
+        gc.collect()
 
+        for batch_idx, data in enumerate(test_loader):
+            print('-/ Batch: {}'.format(batch_idx))
+            x_batch = get_sparse_voxels_batch(
+                data, voxel_size=voxel_size, voxel_min_bound=voxel_min_bound, voxel_max_bound=voxel_max_bound
+            )
+            x_batch = torch.unsqueeze(x_batch, 1)
             bpv_draco = draco_ans(
                 data, x_batch, voxel_size, voxel_min_bound, voxel_max_bound, 6
             )
-
-            bpv_bits_back_arr.append(bpv_bits_back)
-            bpv_bernoulli_arr.append(bpv_bernoulli)
             bpv_draco_arr.append(bpv_draco)
-            bpv_optimal_arr.append(bpv_optimal)
+        del data, x_batch
+        gc.collect()
 
         print('Average results: Bits-back: {} / Bernoulli: {} / Draco: {}'.format(
             np.mean(bpv_bits_back_arr), np.mean(bpv_bernoulli_arr), np.mean(bpv_draco_arr))
@@ -312,6 +332,7 @@ def evaluate_bit_depth(depth_values, subset_size=1, batch_size=800, obs_precisio
         bpv_bits_back_arr, bpv_bernoulli_arr, bpv_draco_arr, bpv_optimal_arr = [], [], [], []
         print('Evaluate {} bit-depth of compression methods on {} point clouds per batch...'.format(
             int(np.log2(depth)), batch_size))
+        # Use different for loops to avoid memory overflow
         for batch_idx, data in enumerate(test_loader):
             print('-/ Batch: {}'.format(batch_idx))
 
@@ -319,24 +340,40 @@ def evaluate_bit_depth(depth_values, subset_size=1, batch_size=800, obs_precisio
                 data, voxel_size=voxel_size, voxel_min_bound=voxel_min_bound, voxel_max_bound=voxel_max_bound
             )
             x_batch = torch.unsqueeze(x_batch, 1)
+            bpv_bernoulli, bpv_optimal = bernoulli_ans(
+                data, x_batch, voxel_size, voxel_min_bound, voxel_max_bound, model, obs_precision, subset_size
+            )
+            bpv_bernoulli_arr.append(bpv_bernoulli)
+            bpv_optimal_arr.append(bpv_optimal)
+        del x_batch, data
+        gc.collect()
 
+        for batch_idx, data in enumerate(test_loader):
+            print('-/ Batch: {}'.format(batch_idx))
+            x_batch = get_sparse_voxels_batch(
+                data, voxel_size=voxel_size, voxel_min_bound=voxel_min_bound, voxel_max_bound=voxel_max_bound
+            )
+            x_batch = torch.unsqueeze(x_batch, 1)
             bpv_bits_back, _ = bits_back_vae_ans(
                 data, x_batch, voxel_size, voxel_min_bound, voxel_max_bound,
                 gen_net, rec_net, obs_codec, obs_precision, subset_size
             )
-
+            bpv_bits_back_arr.append(bpv_bits_back)
+        del x_batch, data
+        gc.collect()
+        for batch_idx, data in enumerate(test_loader):
+            print('-/ Batch: {}'.format(batch_idx))
+            x_batch = get_sparse_voxels_batch(
+                data, voxel_size=voxel_size, voxel_min_bound=voxel_min_bound, voxel_max_bound=voxel_max_bound
+            )
+            x_batch = torch.unsqueeze(x_batch, 1)
             bpv_draco = draco_ans(
                 data, x_batch, voxel_size, voxel_min_bound, voxel_max_bound, int(np.log2(depth))
             )
-
-            bpv_bernoulli, bpv_optimal = bernoulli_ans(
-                data, x_batch, voxel_size, voxel_min_bound, voxel_max_bound, model, obs_precision, subset_size
-            )
-
-            bpv_bits_back_arr.append(bpv_bits_back)
             bpv_draco_arr.append(bpv_draco)
-            bpv_bernoulli_arr.append(bpv_bernoulli)
-            bpv_optimal_arr.append(bpv_optimal)
+
+        del x_batch, data
+        gc.collect()
 
         print('Average results: Bits-back: {} / Bernoulli: {} / Draco: {}'.format(
             np.mean(bpv_bits_back_arr), np.mean(bpv_bernoulli_arr), np.mean(bpv_draco_arr))
@@ -375,8 +412,11 @@ def evaluate_bit_depth(depth_values, subset_size=1, batch_size=800, obs_precisio
     plt.show()
 
 
-def plot_bit_rates(batch_values):
-    output_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Bit_rate_results/')
+def plot_bit_rates(batch_values, dataset_type='shape'):
+    if dataset_type == 'shape':
+        output_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Bit_rate_results/')
+    else:
+        output_dir = os.path.expanduser('~/open3d_data/extract/processed_sunrgbd/Bit_rate_results/')
     results_bitsback = np.load(output_dir + 'bit_rate_vs_batch_size_bitsback.npy')
     results_bernoulli = np.load(output_dir + 'bit_rate_vs_batch_size_bernoulli.npy')
     results_draco = np.load(output_dir + 'bit_rate_vs_batch_size_draco.npy')
@@ -393,8 +433,11 @@ def plot_bit_rates(batch_values):
     plt.grid(linestyle='--')
     plt.show()
 
-def plot_bit_depth(depth_values):
-    output_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Bit_depth_results/')
+def plot_bit_depth(depth_values, dataset_type='shape'):
+    if dataset_type == 'shape':
+        output_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Bit_depth_results/')
+    else:
+        output_dir = os.path.expanduser('~/open3d_data/extract/processed_sunrgbd/Bit_depth_results/')
     results_bitsback = np.load(output_dir + 'bit_rate_vs_bit_depth_bitsback.npy')
     results_bernoulli = np.load(output_dir + 'bit_rate_vs_bit_depth_bernoulli.npy')
     results_draco = np.load(output_dir + 'bit_rate_vs_bit_depth_draco.npy')
@@ -444,9 +487,9 @@ if __name__ == '__main__':
         evaluate_bit_depth(depth_vals, subset_size=1, dataset_type=args.type, batch_size=args.batch, save_results=True)
     elif args.mode == 'plot_rate':
         batch_vals = [100 * i for i in [2, 4, 6, 8, 10, 12]]
-        plot_bit_rates(batch_vals)
+        plot_bit_rates(batch_vals, args.type)
     elif args.mode == 'plot_depth':
         depth_vals = [128, 64, 32]
-        plot_bit_depth(depth_vals)
+        plot_bit_depth(depth_vals, args.type)
     else:
         parser.print_help()

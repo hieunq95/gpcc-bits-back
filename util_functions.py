@@ -415,6 +415,8 @@ def draco_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_
     print('--- Draco -- decoded in {} seconds, average IoU: {}, std IoU: {}'.format(
         t1 - t0, np.mean(iou_arr), np.std(iou_arr))
     )
+    del data, raw_point_clouds, point_clouds, voxel_batch, pcd, decoded_points, decoded_voxel, original_voxel
+    gc.collect()
     return bpv_overhead
 
 def bernoulli_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_bound,
@@ -501,7 +503,7 @@ def bernoulli_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_
         print('--- NoBB_VAE -- decoded in {} seconds, average IoU: {}, std IoU: {}'.format(
             t1 - t0, np.mean(iou_arr), np.std(iou_arr))
         )
-        del decoded_voxel, data_decoded
+        del decoded_voxel, data_decoded, point_clouds, voxel_batch
         gc.collect()
     return bpv_overhead, bpv
 
@@ -553,7 +555,7 @@ def bits_back_vae_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vo
         t1 - t0, flat_message_len / num_voxels, bpv_overhead)
     )
     # free up some memory
-    del message, data, codec_compressor
+    del message, data, codec_compressor, vae_append
     gc.collect()
 
     # save results
@@ -572,7 +574,7 @@ def bits_back_vae_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vo
     del flat_message
     gc.collect()
     message, data_ = vae_pop(message)
-    del message
+    del message, vae_pop
     gc.collect()
     data = np.split(np.asarray(voxel_batch.detach().numpy(), dtype=np.bool_), num_subsets)
     np.testing.assert_equal(data, data_)  # Check lossless compression
@@ -591,7 +593,7 @@ def bits_back_vae_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vo
         t1 - t0, np.mean(iou_arr), np.std(iou_arr))
     )
 
-    del data
+    del data, voxel_batch, point_clouds
     gc.collect()
 
     return bpv_overhead, data_
