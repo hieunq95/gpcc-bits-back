@@ -99,8 +99,8 @@ def test_convo_vae(batch_size=32, generate=True, resolution=64, dataset_type='sh
                                    crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound)
     else:
         test_set = SunRgbdDataset(dataset_path='~/open3d_data/extract/SUNRGBDv2Test/', make_new_dataset=False,
-                                  mode='test', resolution=resolution, crop_min_bound=voxel_min_bound,
-                                  crop_max_bound=voxel_max_bound)
+                                  mode='test', resolution=resolution, device='cpu',
+                                  crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound)
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, drop_last=True)
     model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
     model.load_state_dict(torch.load('model_params/' + param_name, map_location=torch.device('cpu')))
@@ -213,8 +213,8 @@ def eval_bit_rates(batch_values, subset_size=1, obs_precision=25, dataset_type='
                                    crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound)
     else:
         test_set = SunRgbdDataset(dataset_path='~/open3d_data/extract/SUNRGBDv2Test/', make_new_dataset=False,
-                                  mode='test', resolution=resolution, crop_min_bound=voxel_min_bound,
-                                  crop_max_bound=voxel_max_bound)
+                                  mode='test', resolution=resolution, device='cpu',
+                                  crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound)
 
     results_bitsback, results_bernoulli, results_draco, results_optimal = [], [], [], []
     for batch_size in batch_values:
@@ -314,8 +314,8 @@ def evaluate_bit_depth(depth_values, subset_size=1, batch_size=800, obs_precisio
                                        crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound)
         else:
             test_set = SunRgbdDataset(dataset_path='~/open3d_data/extract/SUNRGBDv2Test/', make_new_dataset=False,
-                                      mode='test', resolution=resolution, crop_min_bound=voxel_min_bound,
-                                      crop_max_bound=voxel_max_bound)
+                                      mode='test', resolution=resolution, device='cpu',
+                                      crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound)
 
         test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, drop_last=True)
         # Load model
@@ -473,7 +473,7 @@ def plot_bit_depth(depth_values):
 
     # Set the same y-axis limits for both subplots
     y_max = max(np.max(results_bitsback_shape), np.max(results_draco_shape), np.max(results_bitsback_sun),
-                np.max(results_draco_sun)) + 0.5
+                np.max(results_draco_sun)) + 1.0
     ax1.set_ylim([-0.1, y_max])
     ax2.set_ylim([-0.1, y_max])
 
