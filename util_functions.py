@@ -6,7 +6,6 @@ import time
 import lzma
 import dill
 import gc
-import mat73
 import subprocess
 import re
 import numpy as np
@@ -382,6 +381,10 @@ def draco_decompress(input_file_names, output_folder):
 
 # Functions to compress dataset
 def draco_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_bound, quantz_level):
+    """
+    Compress a batch of point clouds with Draco
+    :return: Compression ratio (bit-per-point), Draco decoder size, Draco model size
+    """
     draco_results_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Draco_results/')
     data = point_clouds
     t0 = time.time()
@@ -390,10 +393,20 @@ def draco_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_
     )
     t1 = time.time()
     flat_message_len = np.sum(compressed_sizes) * 8  # maybe we also need to calculate overhead of Draco's decoder?
-    num_voxels = point_clouds.size()[0] * point_clouds.size()[1]
-    bpv_overhead = flat_message_len / num_voxels
-    print('--- Draco -- encoded in {} seconds, bpv: {}, bpv_overhead: {}'.format(
-        t1 - t0, bpv_overhead, bpv_overhead)
+    num_points = point_clouds.size()[0] * point_clouds.size()[1]
+    bpp = flat_message_len / num_points
+    decoder_fname = 'draco/draco_decoder-1.5.7'
+    encoder_fname = 'draco/draco_encoder-1.5.7'
+    compressor = lzma.LZMACompressor()
+    with open(decoder_fname, 'rb') as draco_decoder:
+        decoder_data = draco_decoder.read()
+
+    decoder_compressed = compressor.compress(dill.dumps(decoder_data))
+    decoder_compressed += compressor.flush()
+    pop_size = len(dill.dumps(decoder_data)) * 8  # in bits
+    model_size = (os.path.getsize(encoder_fname) + os.path.getsize(decoder_fname)) * 8
+    print('--- Draco -- encoded in {} seconds, bpp: {}, draco_codec_size: {}, draco_model_size: {}'.format(
+        t1 - t0, bpp, pop_size, model_size)
     )
     # Decode
     draco_decode_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Draco_results/Decompress/')
@@ -417,14 +430,18 @@ def draco_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_
     )
     del data, raw_point_clouds, point_clouds, voxel_batch, pcd, decoded_points, decoded_voxel, original_voxel
     gc.collect()
-    return bpv_overhead
+    return bpp, pop_size, model_size
 
-def bernoulli_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_bound,
-                  model, obs_precision, subset_size=1):
+def iterative_coding(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_bound,
+                     model, obs_precision, subset_size=1):
+    """
+    Compress a batch of point clouds with iterative coding.
+    :return: Compression ratio (bit-per-point), total size of the iterative decoders, VAE model size
+    """
     data_shape = voxel_batch.size()
     num_data = data_shape[0]
     # num_voxels = torch.sum(voxel_batch)
-    num_voxels = point_clouds.size()[0] * point_clouds.size()[1]
+    num_points = point_clouds.size()[0] * point_clouds.size()[1]
     obs_shape = (subset_size, data_shape[1], data_shape[2], data_shape[3], data_shape[4])
     obs_size = np.prod(obs_shape)
     latent_size = np.prod((subset_size, model.latent_dim))
@@ -446,32 +463,33 @@ def bernoulli_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_
     t1 = time.time()
     codec_compressor = lzma.LZMACompressor()
     pop_size = 0
+    # pfc = codec_compressor.compress(dill.dumps(pop_array[0]))
     for pf in pop_array:
         serialized_pop = dill.dumps(pf)
-        pfc = codec_compressor.compress(serialized_pop)
-        pop_size += len(pfc) * 8
-    codec_compressor.flush()
+        # pfc = codec_compressor.compress(serialized_pop)
+        pop_size += len(serialized_pop) * 8
+    # codec_compressor.flush()
+    # pop_size += len(pfc) * 8  # in bits
     if data_shape[-1] == 32:
-        model_size = 2.1 * 10**6 * 8  # in bits
+        model_size = os.path.getsize('model_params/params_shape_res_32') * 8  # in bits
     elif data_shape[-1] == 64:
-        model_size = 8.4 * 10**6 * 8
+        model_size = os.path.getsize('model_params/params_shape_res_64') * 8
     else:
-        model_size = 8.4 * 10**6 * 8
-    pop_size = min(pop_size, model_size)   # compare size of the Codec with size of the deep learning model
+        model_size = os.path.getsize('model_params/params_shape_res_128') * 8
+
     flat_message_len = 32 * len(flat_message)
-    bpv_overhead = (pop_size + flat_message_len) / num_voxels
-    bpv = flat_message_len / num_voxels
-    print('--- NoBB_VAE -- encoded in {} seconds, bpv: {}, bpv_overhead: {}'.format(
-        t1 - t0, bpv, bpv_overhead)
+    bpp = flat_message_len / num_points  # bit-per-point
+    print('--- Iterative coding -- encoded in {} seconds, bpp: {}, pop_codec_size: {}, vae_model_size: {}'.format(
+        t1 - t0, bpp, pop_size, model_size)
     )
     # free up some memory
     del message, codec_compressor
     gc.collect()
-    save_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Bernoulli_results/')
+    save_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Iterative_coding_results/')
     if not os.path.isdir(save_dir):
         os.mkdir(save_dir)
     np.save(
-        os.path.expanduser(save_dir + 'Bernoulli_shapenet_{}.npy'.format(num_data)),
+        os.path.expanduser(save_dir + 'Iterative_coding_shapenet_{}.npy'.format(num_data)),
         flat_message
     )
     # large batch cause memory overflow, we can only decode smaller than 800 point clouds
@@ -500,15 +518,19 @@ def bernoulli_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_
             ).detach().numpy()
             iou_i = calculate_iou(original_voxel, decoded_voxel)
             iou_arr.append(iou_i)
-        print('--- NoBB_VAE -- decoded in {} seconds, average IoU: {}, std IoU: {}'.format(
+        print('--- Iterative coding -- decoded in {} seconds, average IoU: {}, std IoU: {}'.format(
             t1 - t0, np.mean(iou_arr), np.std(iou_arr))
         )
         del decoded_voxel, data_decoded, point_clouds, voxel_batch
         gc.collect()
-    return bpv_overhead, bpv
+    return bpp, pop_size, model_size
 
-def bits_back_vae_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_bound,
-                      gen_net, rec_net, obs_codec, obs_precision, subset_size=1):
+def bits_back_coding(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_bound,
+                     gen_net, rec_net, obs_codec, obs_precision, subset_size=1, return_data=False):
+    """
+    Compress a batch of point clouds with bits-back coding.
+    :return: Compression ratio (bit-per-point), size of bits-back decoder, VAE model size, decompressed data (optional)
+    """
     def vae_view(head):
         return ag_tuple((np.reshape(head[:latent_size], latent_shape),
                          np.reshape(head[latent_size:], obs_shape)))
@@ -516,7 +538,7 @@ def bits_back_vae_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vo
     data_shape = voxel_batch.size()
     num_data = data_shape[0]
     # num_voxels = torch.sum(voxel_batch)
-    num_voxels = point_clouds.size()[0] * point_clouds.size()[1]
+    num_points = point_clouds.size()[0] * point_clouds.size()[1]
     assert num_data % subset_size == 0
     num_subsets = num_data // subset_size
     latent_dim = 50
@@ -539,27 +561,28 @@ def bits_back_vae_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vo
     t1 = time.time()
     # Compress the Codec itself (should be useful for communication of the model and codec)
     codec_compressor = lzma.LZMACompressor()
-    compressed_pop = codec_compressor.compress(dill.dumps(vae_pop))
-    codec_compressor.flush()
+    compressed_pop = dill.dumps(vae_pop)
+    # compressed_pop += codec_compressor.flush()
     # Calculate bit rate and save compressed data
     pop_size = len(compressed_pop) * 8
+
     if data_shape[-1] == 32:
-        model_size = 2.1 * 10**6 * 8  # in bits
+        model_size = os.path.getsize('model_params/params_shape_res_32') * 8  # in bits
     elif data_shape[-1] == 64:
-        model_size = 8.4 * 10**6 * 8
+        model_size = os.path.getsize('model_params/params_shape_res_64') * 8
     else:
-        model_size = 8.4 * 10**6 * 8
-    pop_size = min(pop_size, model_size)  # compare size of the Codec with size of the deep learning model
-    bpv_overhead = (pop_size + flat_message_len) / num_voxels
-    print('--- BB_VAE -- encoded in {} seconds, bpv: {}, bpv_overhead: {}'.format(
-        t1 - t0, flat_message_len / num_voxels, bpv_overhead)
+        model_size = os.path.getsize('model_params/params_shape_res_128') * 8
+
+    bpp = flat_message_len / num_points  # bit-per-point
+    print('--- Bits-back coding -- encoded in {} seconds, bpp: {}, pop_codec_size: {}, vae_model_size: {}'.format(
+        t1 - t0, bpp, pop_size, model_size)
     )
     # free up some memory
     del message, data, codec_compressor, vae_append
     gc.collect()
 
     # save results
-    save_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/BB_VAE_results/')
+    save_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Bits_back_coding_results/')
     if not os.path.isdir(save_dir):
         os.mkdir(save_dir)
     np.save(
@@ -589,14 +612,18 @@ def bits_back_vae_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vo
         original_voxel = original_voxel.detach().numpy()
         iou_i = calculate_iou(original_voxel, decoded_voxel)
         iou_arr.append(iou_i)
-    print('--- BB_VAE -- decoded in {} seconds, average IoU: {}, std IoU: {}'.format(
+    print('--- Bits-back coding -- decoded in {} seconds, average IoU: {}, std IoU: {}'.format(
         t1 - t0, np.mean(iou_arr), np.std(iou_arr))
     )
 
     del data, voxel_batch, point_clouds
     gc.collect()
-
-    return bpv_overhead, data_
+    if return_data:
+        return bpp, pop_size, model_size, data_
+    else:
+        del data_
+        gc.collect()
+        return bpp, pop_size, model_size
 
 
 

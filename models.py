@@ -16,15 +16,15 @@ class ConvoVAE(nn.Module):
 
         # down-sampling strategies:
         # resolution = 128:  128 -> 8/6(21), 3/2(10), 2/2(5) -> 5 (3 layers)
-        # resolution = 64:   64 -> 4/3(21), 3/2(10), 2/2(5) -> 5 (3 layers)
+        # resolution = 64:   64 -> 4/3(21), 3/2(10), 4/2(4) -> 4 (3 layers)
         # resolution = 32:   32 -> 4/2(15), 3/2(7), 3/2(3) -> 3 (3 layers)
         if self.in_dim[0] == 128:
             ksp = [[8, 6, 0], [3, 2, 0], [2, 2, 0]]  # [kernel_size, stride, padding] per layer
             new_dim = 5  # new dimensional size after convo layers
         elif self.in_dim[0] == 64:
-            ksp = [[4, 3, 0], [3, 2, 0], [2, 2, 0]]
-            new_dim = 5
-        elif self.in_dim[0] == 32:
+            ksp = [[4, 3, 0], [3, 2, 0], [4, 2, 0]]
+            new_dim = 4
+        else:
             ksp = [[4, 2, 0], [3, 2, 0], [3, 2, 0]]
             new_dim = 3
 
