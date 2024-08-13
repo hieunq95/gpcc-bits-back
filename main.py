@@ -477,12 +477,12 @@ def plot_bit_depth(depth_values, metric='bit_rate', save_fig=True):
         results_iterative_sun /= 8 * 10**6
 
     # print out
-    print('Bits-back {} results on Shapenet: {}'.format(metric, np.round(results_bits_back_shape, 2)))
-    print('Bits-back {} results on Sun-RGBD: {}'.format(metric, np.round(results_bits_back_sun, 2)))
-    print('No-bits-back {} results on Shapenet: {}'.format(metric, np.round(results_iterative_shape, 2)))
-    print('No-bits-back {} results on Sun-RGBD: {}'.format(metric, np.round(results_iterative_sun, 2)))
-    print('Draco results {} on Shapenet    : {}'.format(metric, np.round(results_draco_shape, 2)))
-    print('Draco results {} on Sun-RGBD    : {}'.format(metric, np.round(results_draco_sun, 2)))
+    print('Bits-back coding {} results on Shapenet: {}'.format(metric, np.round(results_bits_back_shape, 2)))
+    print('Bits-back coding {} results on Sun-RGBD: {}'.format(metric, np.round(results_bits_back_sun, 2)))
+    print('Iterative coding {} results on Shapenet: {}'.format(metric, np.round(results_iterative_shape, 2)))
+    print('Iterative coding {} results on Sun-RGBD: {}'.format(metric, np.round(results_iterative_sun, 2)))
+    print('Draco results {} on Shapenet           : {}'.format(metric, np.round(results_draco_shape, 2)))
+    print('Draco results {} on Sun-RGBD           : {}'.format(metric, np.round(results_draco_sun, 2)))
 
     # Flip and set the x-axis (bit depth) values
     x_axis = np.flip(np.log2(depth_values))
