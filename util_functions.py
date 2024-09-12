@@ -3,7 +3,6 @@ import shutil
 import os
 import sys
 import time
-import lzma
 import dill
 import gc
 import subprocess
@@ -397,12 +396,9 @@ def draco_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_
     bpp = flat_message_len / num_points
     decoder_fname = 'draco/draco_decoder-1.5.7'
     encoder_fname = 'draco/draco_encoder-1.5.7'
-    compressor = lzma.LZMACompressor()
     with open(decoder_fname, 'rb') as draco_decoder:
         decoder_data = draco_decoder.read()
 
-    decoder_compressed = compressor.compress(dill.dumps(decoder_data))
-    decoder_compressed += compressor.flush()
     pop_size = len(dill.dumps(decoder_data)) * 8  # in bits
     model_size = (os.path.getsize(encoder_fname) + os.path.getsize(decoder_fname)) * 8
     print('--- Draco -- encoded in {} seconds, bpp: {}, draco_codec_size: {}, draco_model_size: {}'.format(
@@ -432,11 +428,11 @@ def draco_ans(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_
     gc.collect()
     return bpp, pop_size, model_size
 
-def iterative_coding(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_bound,
-                     model, obs_precision, subset_size=1):
+def sequential_coding(point_clouds, voxel_batch, voxel_size, voxel_min_bound, voxel_max_bound,
+                      model, obs_precision, subset_size=1):
     """
-    Compress a batch of point clouds with iterative coding.
-    :return: Compression ratio (bit-per-point), total size of the iterative decoders, VAE model size
+    Compress a batch of point clouds with sequential coding.
+    :return: Compression ratio (bit-per-point), total size of the sequential decoders, VAE model size
     """
     data_shape = voxel_batch.size()
     num_data = data_shape[0]
@@ -461,15 +457,10 @@ def iterative_coding(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vox
         message, = push(message, np.asarray(x.detach().numpy().flatten(), dtype=np.uint8))
     flat_message = cs.flatten(message)
     t1 = time.time()
-    codec_compressor = lzma.LZMACompressor()
     pop_size = 0
-    # pfc = codec_compressor.compress(dill.dumps(pop_array[0]))
     for pf in pop_array:
         serialized_pop = dill.dumps(pf)
-        # pfc = codec_compressor.compress(serialized_pop)
         pop_size += len(serialized_pop) * 8
-    # codec_compressor.flush()
-    # pop_size += len(pfc) * 8  # in bits
     if data_shape[-1] == 32:
         model_size = os.path.getsize('model_params/params_shape_res_32') * 8  # in bits
     elif data_shape[-1] == 64:
@@ -479,17 +470,17 @@ def iterative_coding(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vox
 
     flat_message_len = 32 * len(flat_message)
     bpp = flat_message_len / num_points  # bit-per-point
-    print('--- Iterative coding -- encoded in {} seconds, bpp: {}, pop_codec_size: {}, vae_model_size: {}'.format(
+    print('--- Sequential coding -- encoded in {} seconds, bpp: {}, pop_codec_size: {}, vae_model_size: {}'.format(
         t1 - t0, bpp, pop_size, model_size)
     )
     # free up some memory
-    del message, codec_compressor
+    del message
     gc.collect()
-    save_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Iterative_coding_results/')
+    save_dir = os.path.expanduser('~/open3d_data/extract/processed_shapenet/Sequential_coding_results/')
     if not os.path.isdir(save_dir):
         os.mkdir(save_dir)
     np.save(
-        os.path.expanduser(save_dir + 'Iterative_coding_shapenet_{}.npy'.format(num_data)),
+        os.path.expanduser(save_dir + 'Sequential_coding_shapenet_{}.npy'.format(num_data)),
         flat_message
     )
     # large batch cause memory overflow, we can only decode smaller than 800 point clouds
@@ -518,7 +509,7 @@ def iterative_coding(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vox
             ).detach().numpy()
             iou_i = calculate_iou(original_voxel, decoded_voxel)
             iou_arr.append(iou_i)
-        print('--- Iterative coding -- decoded in {} seconds, average IoU: {}, std IoU: {}'.format(
+        print('--- Sequential coding -- decoded in {} seconds, average IoU: {}, std IoU: {}'.format(
             t1 - t0, np.mean(iou_arr), np.std(iou_arr))
         )
         del decoded_voxel, data_decoded, point_clouds, voxel_batch
@@ -559,12 +550,9 @@ def bits_back_coding(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vox
     flat_message = cs.flatten(message)
     flat_message_len = 32 * len(flat_message)
     t1 = time.time()
-    # Compress the Codec itself (should be useful for communication of the model and codec)
-    codec_compressor = lzma.LZMACompressor()
-    compressed_pop = dill.dumps(vae_pop)
-    # compressed_pop += codec_compressor.flush()
-    # Calculate bit rate and save compressed data
-    pop_size = len(compressed_pop) * 8
+
+    pop_size = dill.dumps(vae_pop)
+    pop_size = len(pop_size) * 8
 
     if data_shape[-1] == 32:
         model_size = os.path.getsize('model_params/params_shape_res_32') * 8  # in bits
@@ -578,7 +566,7 @@ def bits_back_coding(point_clouds, voxel_batch, voxel_size, voxel_min_bound, vox
         t1 - t0, bpp, pop_size, model_size)
     )
     # free up some memory
-    del message, data, codec_compressor, vae_append
+    del message, data, vae_append
     gc.collect()
 
     # save results

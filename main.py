@@ -216,11 +216,11 @@ def eval_bit_rates(batch_values, subset_size=1, obs_precision=25, dataset_type='
                                   mode='test', resolution=resolution, device='cpu',
                                   crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound)
 
-    results_bits_back_coding, results_iterative_coding, results_draco = [], [], []
+    results_bits_back_coding, results_sequential_coding, results_draco = [], [], []
     for batch_size in batch_values:
         print('Evaluate bit rates of compression methods on {} point clouds per batch...'.format(batch_size))
         test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, drop_last=True)
-        bpp_bits_back_arr, bpp_draco_arr, bpp_iterative_arr = [], [], []
+        bpp_bits_back_arr, bpp_draco_arr, bpp_sequential_arr = [], [], []
         # Use different for loops to avoid memory overflow
 
         for batch_idx, data in enumerate(test_loader):
@@ -238,15 +238,15 @@ def eval_bit_rates(batch_values, subset_size=1, obs_precision=25, dataset_type='
         gc.collect()
 
         for batch_idx, data in enumerate(test_loader):
-            print('-/ Batch: {} iterative coding'.format(batch_idx))
+            print('-/ Batch: {} sequential coding'.format(batch_idx))
             x_batch = get_sparse_voxels_batch(
                 data, voxel_size=voxel_size, voxel_min_bound=voxel_min_bound, voxel_max_bound=voxel_max_bound
             )
             x_batch = torch.unsqueeze(x_batch, 1)
-            bpp_iterative, _, _ = iterative_coding(
+            bpp_sequential, _, _ = sequential_coding(
                 data, x_batch, voxel_size, voxel_min_bound, voxel_max_bound, model, obs_precision, subset_size
             )
-            bpp_iterative_arr.append(bpp_iterative)
+            bpp_sequential_arr.append(bpp_sequential)
         del x_batch, data
         gc.collect()
 
@@ -263,15 +263,15 @@ def eval_bit_rates(batch_values, subset_size=1, obs_precision=25, dataset_type='
         del data, x_batch
         gc.collect()
 
-        print('Average results: Bits-back coding: {} / Iterative coding: {} / Draco: {}'.format(
-            np.mean(bpp_bits_back_arr), np.mean(bpp_iterative_arr), np.mean(bpp_draco_arr))
+        print('Average results: Bits-back coding: {} / Sequential coding: {} / Draco: {}'.format(
+            np.mean(bpp_bits_back_arr), np.mean(bpp_sequential_arr), np.mean(bpp_draco_arr))
         )
         results_bits_back_coding.append(np.mean(bpp_bits_back_arr))
-        results_iterative_coding.append(np.mean(bpp_iterative_arr))
+        results_sequential_coding.append(np.mean(bpp_sequential_arr))
         results_draco.append(np.mean(bpp_draco_arr))
 
     results_bits_back_coding = np.asarray(results_bits_back_coding)
-    results_iterative_coding = np.asarray(results_iterative_coding)
+    results_sequential_coding = np.asarray(results_sequential_coding)
     results_draco = np.asarray(results_draco)
 
     if save_results:
@@ -282,14 +282,14 @@ def eval_bit_rates(batch_values, subset_size=1, obs_precision=25, dataset_type='
         if not os.path.isdir(output_dir):
             os.mkdir(output_dir)
         np.save(output_dir + 'bit_rate_vs_batch_size_bits_back_coding.npy', results_bits_back_coding)
-        np.save(output_dir + 'bit_rate_vs_batch_size_iterative_coding.npy', results_iterative_coding)
+        np.save(output_dir + 'bit_rate_vs_batch_size_sequential_coding.npy', results_sequential_coding)
         np.save(output_dir + 'bit_rate_vs_batch_size_draco.npy', results_draco)
 
     x_axis = np.asarray(batch_values)
     plt.plot(x_axis, results_bits_back_coding, '-^')
-    plt.plot(x_axis, results_iterative_coding, '--o')
+    plt.plot(x_axis, results_sequential_coding, '--o')
     plt.plot(x_axis, results_draco, '--d')
-    plt.legend(['Bits-back coding (ours)', 'Iterative coding', 'Draco'])
+    plt.legend(['Bits-back coding (ours)', 'Sequential coding', 'Draco'])
     plt.xlabel('Batch size')
     plt.ylabel('Bit per point')
     plt.grid(linestyle='--')
@@ -299,8 +299,8 @@ def evaluate_bit_depth(depth_values, subset_size=1, batch_size=800, obs_precisio
                        dataset_type='shape', save_results=True):
     voxel_min_bound = np.full(3, -1.0)
     voxel_max_bound = np.full(3, 1.0)
-    results_bits_back_coding, results_iterative_coding, results_draco = [], [], []
-    decoder_size_bits_back_coding, decoder_size_iterative_coding, decoder_size_draco = [], [], []
+    results_bits_back_coding, results_sequential_coding, results_draco = [], [], []
+    decoder_size_bits_back_coding, decoder_size_sequential_coding, decoder_size_draco = [], [], []
     for depth in depth_values:
         resolution = np.full(3, depth, dtype=np.int32)
         voxel_size = (voxel_max_bound[0] - voxel_min_bound[0]) / resolution[0]
@@ -326,24 +326,24 @@ def evaluate_bit_depth(depth_values, subset_size=1, batch_size=800, obs_precisio
         gen_net = torch_fun_to_numpy_fun(model.decode)
         obs_codec = lambda p: cs.Bernoulli(p, obs_precision)
 
-        bpp_bits_back_arr, bpp_iterative_arr, bpp_draco_arr = [], [], []  # bit-per-point results
-        pop_size_bits_back_arr, pop_size_iterative_arr, pop_size_draco_arr = [], [], []  # size of the decoders
+        bpp_bits_back_arr, bpp_sequential_arr, bpp_draco_arr = [], [], []  # bit-per-point results
+        pop_size_bits_back_arr, pop_size_sequential_arr, pop_size_draco_arr = [], [], []  # size of the decoders
 
         print('Evaluate {} bit-depth of compression methods on {} point clouds per batch...'.format(
             int(np.log2(depth)), batch_size))
         # Use different for loops to avoid memory overflow
         for batch_idx, data in enumerate(test_loader):
-            print('-/ Batch: {} iterative coding'.format(batch_idx))
+            print('-/ Batch: {} sequential coding'.format(batch_idx))
 
             x_batch = get_sparse_voxels_batch(
                 data, voxel_size=voxel_size, voxel_min_bound=voxel_min_bound, voxel_max_bound=voxel_max_bound
             )
             x_batch = torch.unsqueeze(x_batch, 1)
-            bpp_iterative, pop_size_iterative, vae_mode_size = iterative_coding(
+            bpp_sequential, pop_size_sequential, vae_mode_size = sequential_coding(
                 data, x_batch, voxel_size, voxel_min_bound, voxel_max_bound, model, obs_precision, subset_size
             )
-            bpp_iterative_arr.append(bpp_iterative)
-            pop_size_iterative_arr.append(pop_size_iterative)
+            bpp_sequential_arr.append(bpp_sequential)
+            pop_size_sequential_arr.append(pop_size_sequential)
 
         del x_batch, data
         gc.collect()
@@ -380,20 +380,20 @@ def evaluate_bit_depth(depth_values, subset_size=1, batch_size=800, obs_precisio
         gc.collect()
 
         print('Average results: Bits-back: {} / Bernoulli: {} / Draco: {}'.format(
-            np.mean(bpp_bits_back_arr), np.mean(bpp_iterative_arr), np.mean(bpp_draco_arr))
+            np.mean(bpp_bits_back_arr), np.mean(bpp_sequential_arr), np.mean(bpp_draco_arr))
         )
         results_bits_back_coding.append(np.mean(bpp_bits_back_arr))
-        results_iterative_coding.append(np.mean(bpp_iterative_arr))
+        results_sequential_coding.append(np.mean(bpp_sequential_arr))
         results_draco.append(np.mean(bpp_draco_arr))
         decoder_size_bits_back_coding.append(np.mean(pop_size_bits_back_arr))
-        decoder_size_iterative_coding.append(np.mean(pop_size_iterative_arr))
+        decoder_size_sequential_coding.append(np.mean(pop_size_sequential_arr))
         decoder_size_draco.append(np.mean(pop_size_draco_arr))
 
     results_bits_back_coding = np.asarray(results_bits_back_coding)
-    results_iterative_coding = np.asarray(results_iterative_coding)
+    results_sequential_coding = np.asarray(results_sequential_coding)
     results_draco = np.asarray(results_draco)
     decoder_size_bits_back_coding = np.asarray(decoder_size_bits_back_coding)
-    decoder_size_iterative_coding = np.asarray(decoder_size_iterative_coding)
+    decoder_size_sequential_coding = np.asarray(decoder_size_sequential_coding)
     decoder_size_draco = np.asarray(decoder_size_draco)
 
     if save_results:
@@ -404,27 +404,27 @@ def evaluate_bit_depth(depth_values, subset_size=1, batch_size=800, obs_precisio
         if not os.path.isdir(output_dir):
             os.mkdir(output_dir)
         np.save(output_dir + 'bit_rate_vs_bit_depth_bits_back_coding.npy', results_bits_back_coding)
-        np.save(output_dir + 'bit_rate_vs_bit_depth_iterative_coding.npy', results_iterative_coding)
+        np.save(output_dir + 'bit_rate_vs_bit_depth_sequential_coding.npy', results_sequential_coding)
         np.save(output_dir + 'bit_rate_vs_bit_depth_draco.npy', results_draco)
         np.save(output_dir + 'decoder_size_vs_bit_depth_bits_back_coding.npy', decoder_size_bits_back_coding)
-        np.save(output_dir + 'decoder_size_vs_bit_depth_iterative_coding.npy', decoder_size_iterative_coding)
+        np.save(output_dir + 'decoder_size_vs_bit_depth_sequential_coding.npy', decoder_size_sequential_coding)
         np.save(output_dir + 'decoder_size_vs_bit_depth_draco.npy', decoder_size_draco)
 
     x_axis = np.log2(depth_values)
     # Bit-rate vs bit-depth
     plt.plot(x_axis, results_bits_back_coding, '-^')
-    plt.plot(x_axis, results_iterative_coding, '--o')
+    plt.plot(x_axis, results_sequential_coding, '--o')
     plt.plot(x_axis, results_draco, '-d')
-    plt.legend(['Bits-back coding (ours)', 'Iterative coding', 'Draco'])
+    plt.legend(['Bits-back coding (ours)', 'Sequential coding', 'Draco'])
     plt.xlabel('Bit depth')
     plt.ylabel('Bit per point')
     plt.grid(linestyle='--')
     plt.show()
     # Decoder size vs bit-depth
     plt.plot(x_axis, decoder_size_bits_back_coding, '-^')
-    plt.plot(x_axis, decoder_size_iterative_coding, '--o')
+    plt.plot(x_axis, decoder_size_sequential_coding, '--o')
     plt.plot(x_axis, decoder_size_draco, '-d')
-    plt.legend(['Bits-back coding (ours)', 'Iterative coding', 'Draco'])
+    plt.legend(['Bits-back coding (ours)', 'Sequential coding', 'Draco'])
     plt.xlabel('Bit depth')
     plt.ylabel('Decoder size')
     plt.yscale('log')
@@ -438,19 +438,22 @@ def plot_bit_rates(batch_values, dataset_type='shape', save_fig=False):
     else:
         output_dir = os.path.expanduser('~/open3d_data/extract/processed_sunrgbd/Bit_rate_results/')
     results_bits_back_coding = np.load(output_dir + 'bit_rate_vs_batch_size_bits_back_coding.npy')
-    results_iterative_coding = np.load(output_dir + 'bit_rate_vs_batch_size_iterative_coding.npy')
+    results_sequential_coding = np.load(output_dir + 'bit_rate_vs_batch_size_sequential_coding.npy')
     results_draco = np.load(output_dir + 'bit_rate_vs_batch_size_draco.npy')
 
+    fig, ax = plt.subplots(figsize=(5, 4))
+
     x_axis = np.asarray(batch_values)
-    plt.plot(x_axis, results_bits_back_coding, '-^', linewidth=2.0)
-    plt.plot(x_axis, results_iterative_coding, '--o', linewidth=2.0)
-    plt.plot(x_axis, results_draco, '--d', linewidth=2.0)
-    plt.legend(['Bits-back coding (ours)', 'Iterative coding', 'Draco'], fontsize=14)
-    plt.xlabel('Number of point clouds', fontsize=16)
-    plt.ylabel('Bit per point', fontsize=16)
-    plt.grid(linestyle='--')
-    plt.xticks(fontsize=14)
-    plt.yticks(fontsize=13)
+
+    ax.plot(x_axis, results_bits_back_coding, '-^', linewidth=2.0)
+    ax.plot(x_axis, results_sequential_coding, '--o', linewidth=2.0)
+    ax.plot(x_axis, results_draco, '--d', linewidth=2.0)
+    ax.legend(['Bits-back coding (ours)', 'Sequential coding', 'Draco'], fontsize=14)
+    ax.set_xlabel('Number of point clouds', fontsize=18)
+    ax.set_ylabel('Bit per point', fontsize=18)
+    ax.tick_params(axis='both', which='major', labelsize=14)
+    ax.grid(linestyle='--')
+    plt.tight_layout()
     if save_fig:
         plt.savefig('images/bit-rate-results.pdf')
     plt.show()
@@ -464,8 +467,8 @@ def plot_bit_depth(depth_values, metric='bit_rate', save_fig=True):
     results_bits_back_sun = np.load(sunrgbd_dir + '{}_vs_bit_depth_bits_back_coding.npy'.format(metric))
     results_draco_shape = np.load(shapenet_dir + '{}_vs_bit_depth_draco.npy'.format(metric))
     results_draco_sun = np.load(sunrgbd_dir + '{}_vs_bit_depth_draco.npy'.format(metric))
-    results_iterative_shape = np.load(shapenet_dir + '{}_vs_bit_depth_iterative_coding.npy'.format(metric))
-    results_iterative_sun = np.load(sunrgbd_dir + '{}_vs_bit_depth_iterative_coding.npy'.format(metric))
+    results_sequential_shape = np.load(shapenet_dir + '{}_vs_bit_depth_sequential_coding.npy'.format(metric))
+    results_sequential_sun = np.load(sunrgbd_dir + '{}_vs_bit_depth_sequential_coding.npy'.format(metric))
 
     # Rescale data
     if metric == 'decoder_size':
@@ -473,16 +476,16 @@ def plot_bit_depth(depth_values, metric='bit_rate', save_fig=True):
         results_bits_back_sun /= 8 * 10**6
         results_draco_shape /= 8 * 10**6
         results_draco_sun /= 8 * 10**6
-        results_iterative_shape /= 8 * 10**6
-        results_iterative_sun /= 8 * 10**6
+        results_sequential_shape /= 8 * 10**6
+        results_sequential_sun /= 8 * 10**6
 
     # print out
     print('Bits-back coding {} results on Shapenet: {}'.format(metric, np.round(results_bits_back_shape, 2)))
     print('Bits-back coding {} results on Sun-RGBD: {}'.format(metric, np.round(results_bits_back_sun, 2)))
-    print('Iterative coding {} results on Shapenet: {}'.format(metric, np.round(results_iterative_shape, 2)))
-    print('Iterative coding {} results on Sun-RGBD: {}'.format(metric, np.round(results_iterative_sun, 2)))
-    print('Draco results {} on Shapenet           : {}'.format(metric, np.round(results_draco_shape, 2)))
-    print('Draco results {} on Sun-RGBD           : {}'.format(metric, np.round(results_draco_sun, 2)))
+    print('Sequential coding {} results on Shapenet: {}'.format(metric, np.round(results_sequential_shape, 2)))
+    print('Sequential coding {} results on Sun-RGBD: {}'.format(metric, np.round(results_sequential_sun, 2)))
+    print('Draco results    {} results on Shapenet: {}'.format(metric, np.round(results_draco_shape, 2)))
+    print('Draco results    {} results on Sun-RGBD: {}'.format(metric, np.round(results_draco_sun, 2)))
 
     # Flip and set the x-axis (bit depth) values
     x_axis = np.flip(np.log2(depth_values))
@@ -491,36 +494,38 @@ def plot_bit_depth(depth_values, metric='bit_rate', save_fig=True):
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6, 3))  # 1 row, 2 columns
 
     # Plot the first subplot (Shapenet results)
-    ax1.plot(x_axis, np.flip(results_bits_back_shape), '-^', label='Bits-back')
-    ax1.plot(x_axis, np.flip(results_iterative_shape), '-o', label='No-bits-back')
+    ax1.plot(x_axis, np.flip(results_bits_back_shape), '-^', label='Bits-back coding')
+    ax1.plot(x_axis, np.flip(results_sequential_shape), '-o', label='Sequential coding')
     ax1.plot(x_axis, np.flip(results_draco_shape), '-d', label='Draco')
-    ax1.set_xlabel('Bit depth')
+    ax1.set_xlabel('Bit depth', fontsize=13)
     if metric == 'bit_rate':
-        ax1.set_ylabel('Bit per point')
+        ax1.set_ylabel('Bit per point', fontsize=13)
     else:
-        ax1.set_ylabel('Decoder size (MB)')
+        ax1.set_ylabel('Decoder size (MB)', fontsize=13)
         ax1.set_yscale('log')
     ax1.set_title('Shapenet Results')
-    ax1.legend()
+    ax1.tick_params(axis='both', which='major', labelsize=13)
+    ax1.legend(fontsize=10)
     ax1.grid(linestyle='--')
 
     # Plot the second subplot (SUN-RGBD results)
-    ax2.plot(x_axis, np.flip(results_bits_back_sun), '--^', label='Bits-back')
-    ax2.plot(x_axis, np.flip(results_iterative_sun), '--o', label='No-bits-back')
+    ax2.plot(x_axis, np.flip(results_bits_back_sun), '--^', label='Bits-back coding')
+    ax2.plot(x_axis, np.flip(results_sequential_sun), '--o', label='Sequential coding')
     ax2.plot(x_axis, np.flip(results_draco_sun), '--d', label='Draco')
-    ax2.set_xlabel('Bit depth')
+    ax2.set_xlabel('Bit depth', fontsize=13)
     if metric == 'bit_rate':
-        ax2.set_ylabel('Bit per point')
+        ax2.set_ylabel('Bit per point', fontsize=13)
     else:
-        ax2.set_ylabel('Decoder size (MB)')
+        ax2.set_ylabel('Decoder size (MB)', fontsize=13)
         ax2.set_yscale('log')
     ax2.set_title('SUN-RGBD Results')
-    ax2.legend()
+    ax2.tick_params(axis='both', which='major', labelsize=13)
+    ax2.legend(fontsize=10)
     ax2.grid(linestyle='--')
 
     # Set the same y-axis limits for both subplots
     y_max = max(np.max(results_bits_back_shape), np.max(results_draco_shape),
-                np.max(results_iterative_shape), np.max(results_iterative_sun),
+                np.max(results_sequential_shape), np.max(results_sequential_sun),
                 np.max(results_bits_back_sun), np.max(results_draco_sun)
                 )
     if metric == 'bit_rate':
