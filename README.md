@@ -14,6 +14,7 @@ training a convolutional variational autoencoder (CVAE).
 
 For ShapeNet dataset, we will create a customized dataset of 5 object classes from ShapenetCore that are 
 `04379243` (table), `02958343` (car), `03001627` (chair), `02691156` (airplane), and `04256520` (04256520).
+
 Let's download the corresponding zip files from the ShapeNetCore repository 
 [here](https://huggingface.co/datasets/ShapeNet/ShapeNetCore/tree/main) on HuggingFace. For example, just search
 `04379243.zip` in the HuggingFace repository and download the zip file.
@@ -68,10 +69,10 @@ to avoid the error `error: unrecognized arguments: ---make 1` (due to confusion 
 
 The command above just created three voxelized point cloud datasets for training. 
 The `--res` parameter controls the resolution (bit-depth value `d` described in the paper).
+
 After running each command (take around 1 hour or less for each command), we will have three
 new files in the `processed_shapenet` folder named `shapenet_train_32.npy` (261 MB), `shapenet_train_64.npy` (2.1 GB), 
-and `shapenet_train_128.npy` (16.8 GB). The shape of the voxelized training sets will be `(8000, 32, 32, 32)`, `(8000, 64, 64, 64)`, 
-and `(8000, 128, 128, 128)`.
+and `shapenet_train_128.npy` (16.8 GB). 
 
 Similarly, customized SUN RGB-D training sets can be created by running the following commands, one by one:
 
@@ -96,12 +97,14 @@ To train the CVAE model on ShapeNet training set with bit-depth `d=6` for 500 ep
 
 `python main.py --mode train --ep 500 --res 64 --type shape`.  
 
-After running the above command, we will obtain a trained model named `params_shape_res_64` in the `model_params`
+After running the above command, we will obtain a trained model named `params_shape_res_64` in the
+[model_params](https://github.com/hieunq95/gpcc-bits-back/tree/main/model_params)
 folder. This file will be used later to load the parameters of the CVAE at the testing phase.
 
 For training the model on other training sets, we can change the `--res` and `--type` parameters.
 
-A set of pre-trained models is already in the `model_params` folder for reference.
+A set of pre-trained models is already in the
+[model_params](https://github.com/hieunq95/gpcc-bits-back/tree/main/model_params) folder for reference.
 
 ### 4. Testing CVAE model
 To reproduce the visualization in the paper, we can run the command
@@ -116,10 +119,12 @@ Before recreating some figures in the paper, let's install [Draco](https://githu
 it as a baseline. For this, make sure to follow instructions from the 
 Draco' github [repo](https://github.com/google/draco/blob/main/BUILDING.md).
 
-After installing Draco as a software, let's copy the following files into the 
+After installing Draco as a software, let's copy the following files (appear in the `build_dir` 
+based on the [instruction](build_dir)) into our 
 [draco](https://github.com/hieunq95/gpcc-bits-back/tree/main/draco) folder:
 
 `draco draco.pc  draco_decoder draco_decoder-1.5.7 draco_encoder draco_encoder-1.5.7`.
+
 By doing so, we will later use python wraper functions to use Draco to compress some point cloud data.
 
 Finally, let's compress some voxelized point cloud data with our pre-trained CVAE model:  
