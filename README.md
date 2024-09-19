@@ -10,7 +10,7 @@ run
 ```
 git clone git@github.com:hieunq95/gpcc-bits-back.git
 cd gpcc-bits-back 
-git submodule update --recursive --remote
+git submodule update --init --recursive
 ```
 Then we install the packages with pip  
 ```
