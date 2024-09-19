@@ -4,8 +4,18 @@ This repository is the code for reproducing results in our paper
 
 ### Dependency
 We will need to install `numpy`, `autograd`, `torch`, `matplotlib`, and `open3d`.
+In addition, [craystack](https://github.com/j-towns/craystack) will be installed as a submodule in this project. To install this project with all dependencies,
+run
 
-`pip install -r requirements.txt`
+```
+git clone git@github.com:hieunq95/gpcc-bits-back.git
+cd gpcc-bits-back 
+git submodule update --recursive --remote
+```
+Then we install the packages with pip  
+```
+pip install -r requirements.txt  
+```
 
 ### 1. Preparing datasets
 We will use [ShapeNet](https://huggingface.co/datasets/ShapeNet/ShapeNetCore) 
@@ -26,12 +36,14 @@ Once download the zip files, let's unzip the files and place them in the same fo
 
 To make the folders, use following commands
 
-`mkdir ~/open3d_data`  
-`cd open3d_data`  
-`mkdir extract`  
-`mkdir ShapeNet`  
-`mkdir processed_shapenet`  
-`mkdir processed_sunrgbd`
+```
+mkdir ~/open3d_data
+cd ~/open3d_data  
+mkdir extract  
+mkdir ShapeNet  
+mkdir processed_shapenet  
+mkdir processed_sunrgbd
+```
 
 The folders `ShapeNet` will contain the extracted mesh objects from the ShapeNet dataset, 
 folders `processed_shapenet` and `processed_sunrgbd` will contain processed train set and test set (in `npy` format) 
@@ -59,10 +71,15 @@ hieu/
 #### 2.1 Creating training sets
 Now let's creating the customized datasets as described in the paper.
 The customized ShapeNet training sets can be created by running the following commands, one by one:
-
-`python dataset.py ---make 1 --mpc 2000 --res 32 --mode train --type shape`  
-`python dataset.py ---make 1 --mpc 2000 --res 64 --mode train --type shape`  
-`python dataset.py ---make 1 --mpc 2000 --res 128 --mode train --type shape`
+```
+python dataset.py ---make 1 --mpc 2000 --res 32 --mode train --type shape
+```  
+```
+python dataset.py ---make 1 --mpc 2000 --res 64 --mode train --type shape
+```  
+```
+python dataset.py ---make 1 --mpc 2000 --res 128 --mode train --type shape
+```
 
 **Note: make sure to type the commands by yourself rather than copying from the text above. This is 
 to avoid the error `error: unrecognized arguments: ---make 1` (due to confusion between str and int format of python).
@@ -75,27 +92,36 @@ new files in the `processed_shapenet` folder named `shapenet_train_32.npy` (261 
 and `shapenet_train_128.npy` (16.8 GB). 
 
 Similarly, customized SUN RGB-D training sets can be created by running the following commands, one by one:
-
-`python dataset.py ---make 1 --res 32 --mode train --type sun`  
-`python dataset.py ---make 1 --res 64 --mode train --type sun`  
-`python dataset.py ---make 1 --res 128 --mode train --type sun`
+```
+python dataset.py ---make 1 --res 32 --mode train --type sun
+```  
+```
+python dataset.py ---make 1 --res 64 --mode train --type sun
+```  
+```
+python dataset.py ---make 1 --res 128 --mode train --type sun
+```
 
 We will have three new files `sunrgbd_train_32.npy` (338 MB), `sunrgbd_train_64.npy` (2.7 GB), 
 and `sunrgbd_train_128.npy` (21.7 GB) 
 in the `processed_sunrgbd` folder.
 
 #### 2.2 Creating testing sets
-Let's create ShapeNet test set and SUN RGB-D test as by running  
-
-`python dataset.py ---make 1 --mpc 2000  --mode test --type shape`  
-`python dataset.py ---make 1 --mode test --type sun`  
+Let's create ShapeNet test set and SUN RGB-D test as by running
+```
+python dataset.py ---make 1 --mpc 2000  --mode test --type shape
+```  
+```
+python dataset.py ---make 1 --mode test --type sun
+```
 
 Note that we don't need the `--res` parameter in the input as the test sets are raw point cloud data (not voxelized).
 
 ### 3. Training CVAE model
-To train the CVAE model on ShapeNet training set with bit-depth `d=6` for 500 epochs, we run the following command  
-
-`python main.py --mode train --ep 500 --res 64 --type shape`.  
+To train the CVAE model on ShapeNet training set with bit-depth `d=6` for 500 epochs, we run the following command
+```
+python main.py --mode train --ep 500 --res 64 --type shape
+```
 
 After running the above command, we will obtain a trained model named `params_shape_res_64` in the
 [model_params](https://github.com/hieunq95/gpcc-bits-back/tree/main/model_params)
@@ -108,8 +134,9 @@ A set of pre-trained models is already in the
 
 ### 4. Testing CVAE model
 To reproduce the visualization in the paper, we can run the command
-
-`python main.py --mode test --res 64 --type shape`.
+```
+python main.py --mode test --res 64 --type shape
+```
 
 Similarly, we can vary the parameters `--res` and `--type` for obtaining other visualization results.
 
@@ -127,23 +154,25 @@ based on the [instruction](build_dir)) into our
 
 By doing so, we will later use python wraper functions to use Draco to compress some point cloud data.
 
-Finally, let's compress some voxelized point cloud data with our pre-trained CVAE model:  
-
-`python main.py --mode eval_rate --res 64 --type shape`
-
-This will create Fig. 5 in the paper. To redraw the figure, we can run 
-
-`python main.py --mode plot_rate`
-
+Finally, let's compress some voxelized point cloud data with our pre-trained CVAE model:
+```
+python main.py --mode eval_rate --res 64 --type shape
+```
+This will create Fig. 5 in the paper. To redraw the figure, we can run
+```
+python main.py --mode plot_rate
+```
 To reproduce Fig. 6 in the paper, we run the following commands
-
-`python main.py --mode eval_depth --type shape --batch 999`  
-`python main.py --mode eval_depth --type sun --batch 999`
-
+```
+python main.py --mode eval_depth --type shape --batch 999
+```  
+```
+python main.py --mode eval_depth --type sun --batch 999
+```
 To redraw the figure, we run the command
-
-`python main.py --mode plot_depth`.
-
+```
+python main.py --mode plot_depth
+```
 
 ### Acknowledgement
 Many thanks to Craystack's contributors (Jamie, Daniel, and others) that make the project publicly available.  
