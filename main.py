@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import open3d as o3d
 import craystack as cs
+import matplotlib
 import matplotlib.pyplot as plt
 from torch import optim
 from torch.utils.data import DataLoader
@@ -23,6 +24,8 @@ if torch.cuda.is_available():
 else:
     device = 'cpu'
 print('Device: {}'.format(device))
+matplotlib.rcParams['pdf.fonttype'] = 42
+matplotlib.rcParams['ps.fonttype'] = 42
 
 def train_convo_vae(train_from_scratch=False, n_epochs=50, learning_rate=0.001, resolution=64, dataset_type='shape'):
     resolution = np.full(3, resolution, dtype=np.int32)

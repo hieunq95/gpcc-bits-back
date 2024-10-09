@@ -1,6 +1,7 @@
 ## Point cloud compression with bits-back coding
 This repository is the code for reproducing results in our paper 
-[Point Cloud Compression with Bits-back Coding](https://hieunq95.github.io/).
+[Point Cloud Compression with Bits-back Coding](https://www.dropbox.com/scl/fi/t0sive3jzkio2c5ns0smx/main.pdf?rlkey=6clcxqsun7tw1n8njx7esq2l4&st=mz49z2hw&dl=0).  
+This work is currently under reviewed in **IEEE Robotics and Automation Letters**
 
 ### Dependency
 We will need to install `numpy`, `autograd`, `torch`, `matplotlib`, and `open3d`.
@@ -23,7 +24,7 @@ and [SUN RGB-D](https://rgbd.cs.princeton.edu/challenge.html) as two datasets fo
 training a convolutional variational autoencoder (CVAE).
 
 For ShapeNet dataset, we will create a customized dataset of 5 object classes from ShapenetCore that are 
-`04379243` (table), `02958343` (car), `03001627` (chair), `02691156` (airplane), and `04256520` (04256520).
+`04379243` (table), `02958343` (car), `03001627` (chair), `02691156` (airplane), and `04256520` (sofa).
 
 Let's download the corresponding zip files from the ShapeNetCore repository 
 [here](https://huggingface.co/datasets/ShapeNet/ShapeNetCore/tree/main) on HuggingFace. For example, just search
@@ -53,7 +54,7 @@ Let's extract all file ShapeNet zip files `04379243.zip`, `02958343.zip`, etc, i
 Then we extract `SUNRGBD.zip` and `SUNRGBDLSUNTest.zip` files into the folder `extract`.
 Once the files are extracted, we have the folders look like this:
 
-hieu/  
+usr/  
 |--- open3d_data/  
 |--------- extract/  
 |---------------- ShapeNet/  
@@ -81,8 +82,8 @@ python dataset.py ---make 1 --mpc 2000 --res 64 --mode train --type shape
 python dataset.py ---make 1 --mpc 2000 --res 128 --mode train --type shape
 ```
 
-**Note: make sure to type the commands by yourself rather than copying from the text above. This is 
-to avoid the error `error: unrecognized arguments: ---make 1` (due to confusion between str and int format of python).
+**Note: If getting error `error: unrecognized arguments: ---make 1`, this can be caused by confusion between str 
+and int format of python. To avoid this, try to type the command again rather than copying it from the text.
 
 The command above just created three voxelized point cloud datasets for training. 
 The `--res` parameter controls the resolution (bit-depth value `d` described in the paper).
@@ -129,8 +130,9 @@ folder. This file will be used later to load the parameters of the CVAE at the t
 
 For training the model on other training sets, we can change the `--res` and `--type` parameters.
 
-A set of pre-trained models is already in the
-[model_params](https://github.com/hieunq95/gpcc-bits-back/tree/main/model_params) folder for reference.
+A set of pre-trained models is available to download in 
+[here](https://www.dropbox.com/scl/fo/tkqxsnybq06hmmb6hrjid/AHPdmvsGzo1QveOYGxHklng?rlkey=wv4nkid8kqlma5xbi5b3g8ory&st=qnrssibc&dl=0).   
+We can download the models and place them in the [model_params](https://github.com/hieunq95/gpcc-bits-back/tree/main/model_params) for the next steps.
 
 ### 4. Testing CVAE model
 To reproduce the visualization in the paper, we can run the command
@@ -175,6 +177,5 @@ python main.py --mode plot_depth
 ```
 
 ### Acknowledgement
-Many thanks to Craystack's contributors (Jamie, Daniel, and others) that make the project publicly available.  
 A part of code from this paper is developed based on the [Craystack](https://github.com/j-towns/craystack) 
 code repository.
