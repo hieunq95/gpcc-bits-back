@@ -1,7 +1,6 @@
 ## Point cloud compression with bits-back coding
 This repository is the code for reproducing results in our paper 
-[Point Cloud Compression with Bits-back Coding](https://www.dropbox.com/scl/fi/t0sive3jzkio2c5ns0smx/main.pdf?rlkey=6clcxqsun7tw1n8njx7esq2l4&st=mz49z2hw&dl=0).  
-This work is currently under reviewed in **IEEE Robotics and Automation Letters**
+[Point Cloud Compression with Bits-back Coding](https://www.dropbox.com/scl/fi/t0sive3jzkio2c5ns0smx/main.pdf?rlkey=6clcxqsun7tw1n8njx7esq2l4&st=mz49z2hw&dl=0).
 
 ### Dependency
 We will need to install `numpy`, `autograd`, `torch`, `matplotlib`, and `open3d`.

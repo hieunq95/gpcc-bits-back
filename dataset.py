@@ -1,10 +1,11 @@
 import os
-import fnmatch
 import argparse
 import numpy as np
 import torch
+import open3d as o3d
 from torch.utils.data import DataLoader, Dataset
-from util_functions import *
+from util_functions import (sample_points_from_mesh, get_sparse_voxels, rescale_points,
+                            get_sparse_voxels_batch, visualize_voxels, visualize_points)
 
 
 class ShapeNetDataset(Dataset):

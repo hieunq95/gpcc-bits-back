@@ -1,4 +1,3 @@
-import math
 import time
 import os
 import sys
@@ -6,7 +5,6 @@ import gc
 import argparse
 import numpy as np
 import torch
-import open3d as o3d
 import craystack as cs
 import matplotlib
 import matplotlib.pyplot as plt
@@ -14,15 +12,21 @@ from torch import optim
 from torch.utils.data import DataLoader
 from torch.distributions import Bernoulli
 from dataset import ShapeNetDataset, SunRgbdDataset
-from util_functions import *
+from util_functions import (visualize_points, torch_fun_to_numpy_fun, get_sparse_voxels_batch,
+                            bits_back_coding, visualize_voxels, calculate_iou, calculate_accuracy,
+                            sequential_coding, draco_ans)
 from models import ConvoVAE
 
+os.environ['OPENBLAS_NUM_THREADS'] = '5'  # prevent pytorch crashing on Mac device
 rng = np.random.RandomState(0)
 torch.manual_seed(1234)
 if torch.cuda.is_available():
     device = 'cuda'
 else:
-    device = 'cpu'
+    if torch.backends.mps.is_built():
+        device = 'cpu'
+    else:
+        device = 'cpu'
 print('Device: {}'.format(device))
 matplotlib.rcParams['pdf.fonttype'] = 42
 matplotlib.rcParams['ps.fonttype'] = 42
@@ -91,6 +95,7 @@ def test_convo_vae(batch_size=32, generate=True, resolution=64, dataset_type='sh
        see other functions `eval_bit_rates` and `eval_bit_depth`
        """
     print('Test model\n')
+    device = 'mps'  # force device to be working on
     resolution = np.full(3, resolution, dtype=np.int32)
     voxel_min_bound = np.full(3, -1.0)
     voxel_max_bound = np.full(3, 1.0)
@@ -98,15 +103,15 @@ def test_convo_vae(batch_size=32, generate=True, resolution=64, dataset_type='sh
     param_name = 'params_{}_res_{}'.format(dataset_type, resolution[0])
     if dataset_type == 'shape':
         test_set = ShapeNetDataset(dataset_path='~/open3d_data/extract/ShapeNet/', make_new_dataset=False,
-                                   mode='test', resolution=resolution, device='cpu',
+                                   mode='test', resolution=resolution, device=device,
                                    crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound)
     else:
         test_set = SunRgbdDataset(dataset_path='~/open3d_data/extract/SUNRGBDv2Test/', make_new_dataset=False,
-                                  mode='test', resolution=resolution, device='cpu',
+                                  mode='test', resolution=resolution, device=device,
                                   crop_min_bound=voxel_min_bound, crop_max_bound=voxel_max_bound)
     test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True, drop_last=True)
     model = ConvoVAE(in_dim=resolution, h_dim=500, latent_dim=50, out_dim=resolution)
-    model.load_state_dict(torch.load('model_params/' + param_name, map_location=torch.device('cpu')))
+    model.load_state_dict(torch.load('model_params/' + param_name, map_location=device))
     print('Model: {}'.format(model))
     model.eval()
 
@@ -125,8 +130,8 @@ def test_convo_vae(batch_size=32, generate=True, resolution=64, dataset_type='sh
         if resolution[0] == 128 and x_batch.size()[0] > 100:
             print('Handle large batch x_batch size: {}'.format(x_batch.size()))
             x_small_batches = torch.split(x_batch, 10)
-            x_probs = torch.zeros(x_batch.size(), device='cpu')  # final output of the forward pass through the mode
-            x_recon = torch.zeros(x_batch.size(), device='cpu')
+            x_probs = torch.zeros(x_batch.size(), device=device)  # final output of the forward pass through the mode
+            x_recon = torch.zeros(x_batch.size(), device=device)
             for i, x in enumerate(x_small_batches):
                 x_len = x.size()[0]
                 x_prob_i = model(x).detach()
@@ -160,7 +165,7 @@ def test_convo_vae(batch_size=32, generate=True, resolution=64, dataset_type='sh
             x_decoded_j = np.squeeze(decoded_voxels[j])
             if not generate:
                 # Visualize results
-                x_ori_vis = data[j].detach().numpy()
+                x_ori_vis = data[j].detach().cpu().numpy()
                 print('Num points: {}'.format(len(x_ori_vis)))
                 try:
                     visualize_points(x_ori_vis)
